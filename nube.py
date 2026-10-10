@@ -100,7 +100,7 @@ def _sincronizar(conn, extras):
         cur.execute("SELECT uid, ts, rol, contenido FROM jarvis_mensajes WHERE ts > %s ORDER BY ts LIMIT 1000", (cursor,))
         msgs = cur.fetchall()
     else:      # equipo nuevo: solo lo más reciente, no toda la historia
-        cur.execute("SELECT uid, ts, rol, contenido FROM jarvis_mensajes ORDER BY ts DESC LIMIT 200")
+        cur.execute("SELECT uid, ts, rol, contenido FROM jarvis_mensajes ORDER BY ts DESC LIMIT %s", (config.NUBE_MENSAJES_INICIALES,))
         msgs = cur.fetchall()[::-1]
     if msgs:
         mayor = memoria.aplicar_remoto_mensajes(msgs)

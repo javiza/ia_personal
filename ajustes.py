@@ -55,6 +55,30 @@ def suscribir_cambio_nombre(callback):
     _suscriptores.append(callback)
 
 
+def voz_activa() -> bool:
+    """¿Se le habla por voz? False = modo solo escritura: no se abre el micrófono ni se escucha «Hey Jarvis»."""
+    return bool(_leer().get("voz_activa", True))
+
+
+def guardar_voz_activa(activa: bool):
+    with _lock:
+        datos = _leer()
+        datos["voz_activa"] = bool(activa)
+        _escribir(datos)
+
+
+def leer_respuestas() -> bool:
+    """¿Leer en voz alta las respuestas a lo que escribes en el chat?"""
+    return bool(_leer().get("leer_respuestas", False))
+
+
+def guardar_leer_respuestas(valor: bool):
+    with _lock:
+        datos = _leer()
+        datos["leer_respuestas"] = bool(valor)
+        _escribir(datos)
+
+
 def obtener_posicion():
     pos = _leer().get("posicion")
     if isinstance(pos, list) and len(pos) == 2:

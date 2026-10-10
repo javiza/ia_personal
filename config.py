@@ -35,7 +35,12 @@ def _cargar_claves():
 _cargar_claves()
 
 # --- Identidad ---
-NOMBRE_POR_DEFECTO = "Jarvis"      # nombre inicial; luego puedes cambiarlo cuando quieras
+NOMBRE_POR_DEFECTO = os.environ.get("JARVIS_NOMBRE", "Jarvis")   # nombre inicial; luego puedes cambiarlo cuando quieras
+
+# --- Versión web / celular (servidor.py, desplegada en Render) ---
+# JARVIS_MODO_WEB=1 la pone en modo servidor: solo herramientas seguras (web, clima, memoria), sin tocar archivos,
+# pantalla ni ventanas del servidor. Se activa sola en servidor.py.
+MODO_WEB = os.environ.get("JARVIS_MODO_WEB", "") == "1"
 AVATAR_PATH = os.path.join(BASE_DIR, "assets", "avatar.png")
 # Para usar OTRA imagen como icono (una foto, una ilustración que generes con una IA
 # de imágenes, etc.) basta con reemplazar assets/avatar.png por tu archivo (PNG con
@@ -80,6 +85,8 @@ WHISPER_VAD_FILTER = True
 #   "anthropic" -> Claude (de pago, por uso); también trae sus propias normas.
 # Si quieres que NUNCA use una nube con filtros: ORDEN_CEREBROS = ["ollama"]
 ORDEN_CEREBROS = ["ollama", "groq"]
+if os.environ.get("JARVIS_CEREBROS"):          # p. ej. en Render:  JARVIS_CEREBROS=groq,anthropic
+    ORDEN_CEREBROS = [x.strip() for x in os.environ["JARVIS_CEREBROS"].split(",") if x.strip()]
 
 # Ollama (local).  Instalar:  ollama pull hermes3:8b   (~5 GB; hecho para usar herramientas)
 OLLAMA_MODEL = "hermes3:8b"
@@ -210,6 +217,8 @@ APRENDER_CADA = 6                          # cada cuántos turnos reflexiona (o 
 #     JARVIS_DATABASE_URL=postgresql://usuario:clave@dpg-xxxx.oregon-postgres.render.com/base   (External Database URL)
 # Sin esa variable todo se guarda solo en este equipo. La clave de la URL es privada: no la pongas en este archivo.
 DATABASE_URL = os.environ.get("JARVIS_DATABASE_URL", "").strip()
+# Al iniciar con la base local vacía (equipo nuevo, o el servidor de Render que se reinicia) se bajan estos mensajes.
+NUBE_MENSAJES_INICIALES = 20000 if MODO_WEB else 200
 NUBE_SYNC_SEGUNDOS = 60                    # cada cuánto revisa la nube (si hay algo nuevo, sube enseguida)
 NUBE_TIMEOUT = 8                           # s máx. para conectarse a la nube
 

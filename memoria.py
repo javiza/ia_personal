@@ -169,7 +169,9 @@ def guardar_mensaje(rol: str, contenido: str):
 def cargar_historial_reciente(limite: int = None) -> list[dict]:
     limite = limite or config.MAX_HISTORY_MESSAGES
     conn = _conectar()
-    filas = conn.execute("SELECT rol, contenido FROM mensajes ORDER BY id DESC LIMIT ?", (limite,)).fetchall()
+    # 'user_error' = prompts que no se pudieron responder: se guardan para el historial, pero no van al modelo.
+    filas = conn.execute("SELECT rol, contenido FROM mensajes WHERE rol IN ('user','assistant') "
+                         "ORDER BY id DESC LIMIT ?", (limite,)).fetchall()
     conn.close()
     filas.reverse()
     # Se descartan avisos de error y salidas rotas guardadas por versiones anteriores: el modelo
@@ -186,6 +188,112 @@ def cargar_historial_reciente(limite: int = None) -> list[dict]:
             continue
         limpias.append({"role": rol, "content": contenido})
     return limpias
+
+
+# ------------------------------------------------------------------ historial de prompts (todo lo que has pedido)
+ROLES_PROMPT = ("user", "user_error")
+
+
+def guardar_prompt_fallido(contenido: str):
+    """Un prompt que no obtuvo respuesta (sin internet, límite del modelo…) también se recuerda."""
+    conn = _conectar()
+    conn.execute("INSERT INTO mensajes (timestamp, rol, contenido, uid, sync) VALUES (?, 'user_error', ?, ?, 0)",
+                 (_ahora(), contenido, uuid.uuid4().hex))
+    conn.commit()
+    conn.close()
+    _avisar_nube()
+
+
+def _hora_local(ts: str) -> str:
+    try:
+        d = datetime.datetime.fromisoformat(ts).astimezone()
+        return d.strftime("%d-%m-%Y %H:%M")
+    except ValueError:
+        return ts[:16]
+
+
+def todos_los_prompts(limite: int = 5000) -> list[tuple[str, str]]:
+    """[(fecha legible, texto)] de TODO lo que el usuario ha pedido, del más antiguo al más reciente."""
+    conn = _conectar()
+    try:
+        filas = conn.execute("SELECT timestamp, contenido FROM mensajes WHERE rol IN ('user','user_error') "
+                             "ORDER BY timestamp DESC, id DESC LIMIT ?", (limite,)).fetchall()
+    finally:
+        conn.close()
+    filas.reverse()
+    return [(_hora_local(ts), c) for ts, c in filas]
+
+
+def mensajes_para_chat(limite: int = 150) -> list[tuple[str, str, str]]:
+    """[(fecha, quien, texto)] de la conversación anterior, para mostrarla al abrir el chat."""
+    conn = _conectar()
+    try:
+        filas = conn.execute("SELECT timestamp, rol, contenido FROM mensajes ORDER BY timestamp DESC, id DESC LIMIT ?",
+                             (limite,)).fetchall()
+    finally:
+        conn.close()
+    filas.reverse()
+    quien = {"user": "tu", "user_error": "tu", "assistant": "ella"}
+    return [(_hora_local(ts), quien.get(rol, "aviso"), c) for ts, rol, c in filas if rol in quien]
+
+
+def contar_prompts() -> int:
+    conn = _conectar()
+    try:
+        return conn.execute("SELECT COUNT(*) FROM mensajes WHERE rol IN ('user','user_error')").fetchone()[0]
+    finally:
+        conn.close()
+
+
+def buscar_prompts(consulta: str, k: int = 8, con_respuesta: bool = True) -> list[dict]:
+    """
+    Busca en TODO el historial lo más parecido a 'consulta' (palabras compartidas, dando más peso a las poco comunes).
+    Sin consulta devuelve los últimos k. Cada resultado: {fecha, prompt, respuesta}.
+    """
+    conn = _conectar()
+    try:
+        filas = conn.execute("SELECT id, timestamp, rol, contenido FROM mensajes WHERE rol IN ('user','user_error','assistant') "
+                             "ORDER BY timestamp, id").fetchall()
+    finally:
+        conn.close()
+    prompts = [(i, ts, c) for i, ts, rol, c in filas if rol in ROLES_PROMPT]
+    if not prompts:
+        return []
+    respuesta_de = {}
+    if con_respuesta:
+        for n, (i, ts, rol, c) in enumerate(filas):
+            if rol in ROLES_PROMPT and n + 1 < len(filas) and filas[n + 1][2] == "assistant":
+                respuesta_de[i] = filas[n + 1][3]
+    q = set(_tokens(consulta))
+    if q:
+        docs = [set(_tokens(c)) for _, _, c in prompts]
+        df = Counter(w for d in docs for w in d)
+        puntos = sorted(((sum(math.log(1 + len(docs) / df[w]) for w in q & d), n)
+                         for n, d in enumerate(docs) if q & d), reverse=True)
+        elegidos = sorted(n for _, n in puntos[:k])
+    else:
+        elegidos = list(range(max(0, len(prompts) - k), len(prompts)))
+    return [{"fecha": _hora_local(prompts[n][1]), "prompt": prompts[n][2],
+             "respuesta": respuesta_de.get(prompts[n][0], "")} for n in elegidos]
+
+
+def prompts_relacionados(consulta: str, k: int = 3, excluir_recientes: int = 12) -> list[str]:
+    """Prompts ANTIGUOS (fuera de la ventana de conversación actual) parecidos a lo que se pide ahora."""
+    conn = _conectar()
+    try:
+        filas = conn.execute("SELECT contenido FROM mensajes WHERE rol IN ('user','user_error') AND id NOT IN "
+                             "(SELECT id FROM mensajes ORDER BY id DESC LIMIT ?) ORDER BY id", (excluir_recientes,)).fetchall()
+    finally:
+        conn.close()
+    textos = [f[0] for f in filas]
+    q = set(_tokens(consulta))
+    if not textos or not q:
+        return []
+    docs = [set(_tokens(t)) for t in textos]
+    df = Counter(w for d in docs for w in d)
+    puntos = sorted(((sum(math.log(1 + len(docs) / df[w]) for w in q & d), n)
+                     for n, d in enumerate(docs) if len(q & d) >= 2), reverse=True)
+    return [textos[n][:200] for _, n in puntos[:k]]
 
 
 # ------------------------------------------------------------------ conocimiento

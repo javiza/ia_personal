@@ -1,0 +1,24 @@
+# Render Blueprint: New + > Blueprint > elige tu repo de GitHub. Render crea el servicio y te pide los valores «sync: false».
+services:
+  - type: web
+    name: jarvis
+    runtime: python
+    plan: free                      # gratis: se «duerme» tras 15 min sin uso y tarda ~30 s en despertar. Con plan pagado no.
+    buildCommand: pip install -r requirements-web.txt
+    startCommand: uvicorn servidor:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips="*"
+    healthCheckPath: /salud
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.7
+      - key: JARVIS_CEREBROS          # el celular no tiene Ollama: solo nube
+        value: groq,anthropic
+      - key: JARVIS_NOMBRE
+        value: Mackena
+      - key: JARVIS_WEB_CLAVE         # la clave que escribirás en el celular para entrar (¡larga!)
+        sync: false
+      - key: GROQ_API_KEY             # gratis en console.groq.com (también transcribe tu voz si el navegador no sabe)
+        sync: false
+      - key: ANTHROPIC_API_KEY        # opcional (de pago)
+        sync: false
+      - key: JARVIS_DATABASE_URL      # tu Postgres de Render: así recuerda todo aunque el servidor se reinicie
+        sync: false

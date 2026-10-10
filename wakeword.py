@@ -16,10 +16,12 @@ def crear_detector():
     return Model(wakeword_models=[config.WAKEWORD_MODEL])
 
 
-def esperar_wake_word(modelo, evento_manual=None, evento_salir=None, depurar=False) -> bool:
+def esperar_wake_word(modelo, evento_manual=None, evento_salir=None, depurar=False, seguir=None):
     """
     Bloquea hasta oír la palabra de activación (o hasta que evento_manual se active,
     por ejemplo con un clic en el avatar). Devuelve False si se pidió cerrar el programa.
+    'seguir' es una función opcional: si deja de devolver True (el usuario apagó la voz), se cierra el
+    micrófono y se devuelve None.
     """
     modelo.reset()
     contador = 0
@@ -28,6 +30,8 @@ def esperar_wake_word(modelo, evento_manual=None, evento_salir=None, depurar=Fal
         while True:
             if evento_salir is not None and evento_salir.is_set():
                 return False
+            if seguir is not None and not seguir():
+                return None
             if evento_manual is not None and evento_manual.is_set():
                 evento_manual.clear()
                 return True

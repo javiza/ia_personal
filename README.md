@@ -48,6 +48,52 @@ Usa tablas con prefijo `jarvis_`, así puedes compartir la base con otra app. **
 30 días (y se borran 14 días después); con un plan pagado no. Como tu PC guarda su propia copia, si caduca no pierdes nada:
 creas otra base, cambias la URL y todo se vuelve a subir.
 
+## Voz o escritura (interruptor)
+
+Tú decides cómo darle las indicaciones: **🎙️ Voz activada** (te escucha con «Hey Jarvis» o clic en el avatar) o **🔇 Voz apagada · solo escritura**
+(no abre el micrófono; un clic en el avatar abre el chat). Se cambia con el botón verde/rojo del chat, la insignia 🎙️ del avatar
+o clic derecho > *Voz activada*. Se recuerda al reiniciar (`ajustes.json`). Con la voz apagada, «Leer en voz alta las respuestas»
+sigue siendo opcional (también se recuerda).
+
+## Recuerda todos tus prompts
+
+Todo lo que pides (por voz o por escrito, incluso lo que falló por falta de internet) queda guardado en `memoria.sqlite3` (y en la nube si la configuraste).
+
+- **Chat**: al abrirlo muestra la conversación anterior. **↑ / ↓** en la caja de texto recorren tus pedidos pasados (como una terminal).
+- **📜 Historial**: lista y buscador de *todo* lo que has pedido; doble clic lo vuelve a poner en la caja.
+- **Por voz**: «¿qué te pedí ayer sobre turismo?», «¿cuál fue mi último pedido?» (herramienta `buscar_en_historial`).
+- Además, antes de responder se le muestran hasta 3 pedidos antiguos parecidos al actual, para que tenga contexto sin llenar el prompt.
+
+## En el celular (app web instalable) — GitHub → Render
+
+`servidor.py` + la carpeta `web/` son la versión para teléfono: se instala como una app (icono en la pantalla de inicio,
+pantalla completa), con la peliroja animada, el interruptor voz/escritura y el historial. Usa el mismo cerebro y la misma memoria.
+
+**1. Súbela a GitHub** (desde esta carpeta; `.gitignore` ya deja fuera tu memoria, ajustes, claves y el entorno virtual):
+```bash
+git add -A && git commit -m "Versión web/celular" && git push
+```
+**2. Despliégala en Render**: *New + → Blueprint* → elige tu repositorio (usa `render.yaml`). Render te pedirá 3 valores:
+
+| Variable | Qué poner |
+|---|---|
+| `JARVIS_WEB_CLAVE` | La clave con la que entrarás desde el celular. **Hazla larga**: sin ella nadie entra, con ella cualquiera que la sepa usa tus claves de IA. |
+| `GROQ_API_KEY` | Tu clave de Groq (el cerebro; también transcribe tu voz si el navegador no sabe dictar). |
+| `JARVIS_DATABASE_URL` | La URL de tu Postgres de Render (la misma del escritorio: así el celular y el PC comparten memoria e historial). Sin ella, el servidor olvida todo cada vez que se reinicia. |
+
+(Opcional: `ANTHROPIC_API_KEY`. `JARVIS_NOMBRE` ya viene como Mackena.) Cuando termine, Render te da una dirección `https://jarvis-xxxx.onrender.com`.
+
+**3. Instálala**: ábrela en el celular, entra con tu clave y
+- **Android (Chrome)**: botón **📲 Instalar** de la app (o menú ⋮ → *Instalar aplicación*).
+- **iPhone (Safari)**: *Compartir → Agregar a pantalla de inicio*.
+
+Cosas a saber:
+- **Voz**: toca la peliroja o el botón 🎙️ y habla; contesta con el altavoz del teléfono. Funciona mejor en Chrome (Android). No hay «Hey Jarvis» en el celular (el navegador no puede escuchar en segundo plano): se toca para hablar. Con **🔇 Voz apagada** solo escribes.
+- **Solo en el celular**: buscar en internet, leer páginas, clima, memoria e historial. Archivos, fotos, video y pantalla son del computador (el servidor no toca nada suyo a propósito).
+- El plan gratis de Render **duerme el servicio** tras 15 min sin uso: la primera vez tarda ~30 s en despertar.
+- ¿Quieres un `.apk` de verdad (Play Store o instalar el archivo)? Con la dirección de Render, [PWABuilder](https://www.pwabuilder.com) lo genera sin tocar el código.
+- Probar en tu PC antes: `pip install -r requirements-web.txt` y `JARVIS_WEB_CLAVE=algo uvicorn servidor:app --port 8000` → http://localhost:8000 (el micrófono solo funciona en `localhost` o `https`).
+
 ## Cerebro
 
 `ORDEN_CEREBROS` en `config.py` (se prueban en orden; si uno falla pasa al siguiente):
@@ -69,7 +115,7 @@ aprendizaje automático): `["ollama"]`.
   animar una imagen, unir y editar video con ffmpeg. Claves en `~/.config/jarvis/env`.
 - **Pantalla**: `ver_ventanas`, `ver_pantalla` (solo cuando se lo pides; la captura se envía al modelo que uses; apágalo con `PERMITIR_PANTALLA = False`).
 - **Nombre**: «a partir de ahora te llamas Aria». La palabra de activación sigue siendo «Hey Jarvis».
-- **Avatar**: cambia `assets/avatar.png`, o deja un `avatar.gif` (también uno por estado: `avatar_reposo.gif`, `avatar_escuchando.gif`…).
+- **Avatar animado (la peliroja)**: un GIF por estado en `assets/` — `avatar_reposo.gif`, `avatar_escuchando.gif`, `avatar_pensando.gif` (con nube de pensamiento) y `avatar_hablando.gif`. Se regeneran desde `assets/pelirroja_original.png` con `python3 crear_avatar_gifs.py`. Para usar tus propios GIF, reemplaza esos archivos. El chat muestra la misma animación grande arriba.
 
 ## Problemas frecuentes
 

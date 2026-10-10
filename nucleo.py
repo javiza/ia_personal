@@ -15,6 +15,7 @@ import personalidad
 class Asistente:
     def __init__(self):
         self._lock = threading.Lock()
+        self.ultimo_ok = True            # ¿la última respuesta fue real (True) o un aviso de error (False)?
         memoria.iniciar()                # base local + copia en la nube (si está configurada)
         self.historial = [{"role": "system", "content": personalidad.construir_system_prompt()}]
         self.historial += memoria.cargar_historial_reciente()
@@ -28,10 +29,15 @@ class Asistente:
 
             respuesta, ok = llm.preguntar(self.historial)
 
+            self.ultimo_ok = ok
             if not ok:
                 # Un aviso de error NO entra en la conversación: antes se guardaban
                 # («Llegué al límite…») y el modelo los imitaba en las respuestas siguientes.
                 self.historial.pop()
+                try:
+                    memoria.guardar_prompt_fallido(texto)    # el prompt se recuerda aunque no haya podido responder
+                except Exception:
+                    pass
                 return respuesta
             self.historial.append({"role": "assistant", "content": respuesta})
             memoria.guardar_mensaje("user", texto)

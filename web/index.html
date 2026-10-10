@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Jarvis</title>
+<meta name="theme-color" content="#0b1222">
+<meta name="description" content="Tu asistente personal por voz y texto">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/static/img/icon-192.png">
+<link rel="apple-touch-icon" href="/static/img/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Jarvis">
+<link rel="stylesheet" href="/static/estilo.css">
+</head>
+<body>
+
+<!-- Entrada con clave -->
+<main id="login" class="login" hidden>
+  <img class="login-avatar" src="/static/img/avatar_reposo.gif" alt="">
+  <h1>Jarvis</h1>
+  <form id="form-login" autocomplete="on">
+    <input id="clave" type="password" name="password" autocomplete="current-password" placeholder="Clave de acceso" required>
+    <button type="submit">Entrar</button>
+    <p id="login-error" class="error" role="alert"></p>
+  </form>
+</main>
+
+<!-- App -->
+<div id="app" class="app" hidden>
+  <header class="cabecera">
+    <button id="avatar" class="avatar" data-estado="reposo" aria-label="Hablar con ella">
+      <img id="avatar-img" src="/static/img/avatar_reposo.gif" alt="">
+    </button>
+    <div class="cabecera-texto">
+      <h1 id="nombre">Jarvis</h1>
+      <p id="estado-txt" class="estado">En reposo</p>
+      <div class="botones">
+        <button id="btn-voz" class="voz" aria-pressed="true"></button>
+        <button id="btn-hist" class="suave">📜 Historial</button>
+        <button id="btn-instalar" class="suave" hidden>📲 Instalar</button>
+      </div>
+    </div>
+  </header>
+
+  <p id="ayuda-ios" class="aviso" hidden>Para instalarla en iPhone: toca <b>Compartir</b> y luego <b>Agregar a pantalla de inicio</b>.</p>
+
+  <section id="chat" class="chat" aria-live="polite"></section>
+
+  <footer class="entrada">
+    <label class="leer"><input id="leer" type="checkbox"> Leer en voz alta lo que respondo a lo que escribo</label>
+    <form id="form-chat" class="fila">
+      <button id="btn-mic" type="button" class="mic" aria-label="Hablar" hidden>🎙️</button>
+      <input id="texto" type="text" enterkeyhint="send" autocomplete="off" autocapitalize="sentences" placeholder="Escribe aquí…">
+      <button type="submit" class="enviar" aria-label="Enviar">➤</button>
+    </form>
+  </footer>
+</div>
+
+<!-- Historial de pedidos -->
+<dialog id="dlg-hist" class="dialogo">
+  <form method="dialog" class="dlg-cab">
+    <strong id="hist-titulo">Todo lo que has pedido</strong>
+    <button class="suave" value="x">Cerrar</button>
+  </form>
+  <input id="hist-buscar" type="search" placeholder="Buscar…" autocomplete="off">
+  <p id="hist-info" class="estado"></p>
+  <ul id="hist-lista" class="lista"></ul>
+</dialog>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

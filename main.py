@@ -7,6 +7,7 @@ Asistente de voz con avatar en pantalla.
 Flujo por voz: espera tu "Hey Jarvis" (o un clic en el avatar) -> graba hasta que callas ->
 Whisper transcribe -> el modelo piensa y usa herramientas -> responde en voz alta.
 Por texto: clic en la insignia 💬 del avatar (o clic derecho > Escribir…) y escribe.
+Interruptor de voz: botón «Voz» del chat, insignia 🎙️ del avatar o clic derecho. Apagado = solo escritura (no usa el micrófono).
 Para salir: dile "adiós", clic derecho > Salir, o Ctrl+C.
 """
 import sys
@@ -40,7 +41,7 @@ class SalidaUI:
     def mensaje(self, quien, texto): self.p.mensaje.emit(quien, texto)
 
 
-def bucle_voz(asistente, salida, manual: threading.Event, cerrar: threading.Event):
+def bucle_voz(asistente, salida, manual: threading.Event, cerrar: threading.Event, respetar_interruptor=True):
     # Imports pesados aquí (hilo de voz) para que el avatar aparezca de inmediato.
     import audio_io, stt, tts, wakeword
 
@@ -53,7 +54,16 @@ def bucle_voz(asistente, salida, manual: threading.Event, cerrar: threading.Even
     while not cerrar.is_set():
         try:
             salida.estado("reposo")
-            if not wakeword.esperar_wake_word(detector, manual, cerrar):
+            if respetar_interruptor and not ajustes.voz_activa():
+                # Modo solo escritura: el micrófono queda libre (no se abre) hasta que se vuelva a activar la voz.
+                manual.clear()
+                cerrar.wait(0.3)
+                continue
+            seguir = ajustes.voz_activa if respetar_interruptor else None
+            oido = wakeword.esperar_wake_word(detector, manual, cerrar, seguir=seguir)
+            if oido is None:             # apagaron la voz mientras esperaba
+                continue
+            if not oido:
                 break
 
             salida.estado("escuchando")
@@ -136,7 +146,7 @@ def main():
 
     if sin_ui:
         try:
-            bucle_voz(asistente, SalidaConsola(), manual, cerrar)
+            bucle_voz(asistente, SalidaConsola(), manual, cerrar, respetar_interruptor=False)
         except KeyboardInterrupt:
             print("\n👋 Cerrando.")
         return

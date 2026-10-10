@@ -1,0 +1,9 @@
+# Versión web/celular (servidor.py). Más liviana que requirements.txt: sin micrófono, Whisper local ni PySide6.
+fastapi>=0.110
+uvicorn>=0.29
+requests>=2.32
+beautifulsoup4>=4.12   # leer páginas web
+ddgs>=9.0              # buscar en internet
+psycopg2-binary>=2.9   # memoria en la nube (Postgres de Render)
+numpy>=1.26            # las usa imagenes.py al importarse (las funciones de fotos no se ofrecen en el celular)
+Pillow>=10.0
