@@ -11,11 +11,35 @@ import queue
 import re
 import threading
 import tempfile
+import subprocess
+
 import edge_tts
-from playsound import playsound
+import numpy as np
+import sounddevice as sd
+
 import config
+import medios
 
 _lock = threading.Lock()   # un solo audio a la vez (voz y chat comparten esto)
+
+
+_HZ = 24000
+
+
+def _reproducir(ruta: str):
+    """
+    Reproduce un mp3: ffmpeg lo decodifica y sounddevice lo toca. Reemplaza a «playsound», que no se
+    puede instalar en Python 3.10+ (su instalación falla y arrastraba a todas las demás librerías).
+    """
+    exe = medios.ffmpeg_exe()
+    if not exe:
+        raise RuntimeError(medios._SIN_FFMPEG)
+    crudo = subprocess.run([exe, "-v", "error", "-i", ruta, "-f", "f32le", "-ac", "1", "-ar", str(_HZ), "-"],
+                           capture_output=True, timeout=60)
+    if crudo.returncode != 0 or not crudo.stdout:
+        raise RuntimeError("no pude decodificar la voz: " + crudo.stderr.decode(errors="replace")[:150])
+    sd.play(np.frombuffer(crudo.stdout, dtype=np.float32), _HZ)
+    sd.wait()
 
 
 async def _sintetizar(texto: str, ruta: str):
@@ -68,7 +92,7 @@ def hablar(texto: str):
                     break
                 if isinstance(item, Exception):
                     raise item
-                playsound(item)
+                _reproducir(item)
     except Exception as e:
         print(f"⚠️  No pude reproducir la voz ({e}). ¿Tienes internet? "
               f"Revisa el README para la alternativa offline.")

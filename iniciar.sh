@@ -50,7 +50,7 @@ fi
 
 # --- 2. Instalar lo que falte ----------------------------------------------------------------
 # Se vuelve a revisar solo si cambió requirements.txt o si falta alguna librería importante.
-IMPORTS="requests numpy sounddevice faster_whisper openwakeword edge_tts playsound docx openpyxl fpdf PIL mss bs4 pypdf PySide6 psycopg2"
+IMPORTS="requests numpy sounddevice faster_whisper openwakeword edge_tts docx openpyxl fpdf PIL mss bs4 pypdf PySide6 psycopg2"
 
 faltan() {
     "$PY" - $IMPORTS <<'PYEOF'
@@ -66,7 +66,14 @@ instalar() {
         sha256sum "$DIR/requirements.txt" | cut -d' ' -f1 > "$MARCA_REQ"
         log "✔ librerías instaladas"
     else
-        log "⚠ pip terminó con errores; sigo con lo que haya (mira arriba qué paquete falló)."
+        # Un solo paquete que no compile hace que pip no instale NADA. Se prueba uno por uno.
+        log "⚠ pip falló en un paquete; instalo los demás uno por uno..."
+        local linea paq
+        while IFS= read -r linea; do
+            paq="$(echo "${linea%%#*}" | xargs)"
+            [ -z "$paq" ] && continue
+            "$PY" -m pip install --disable-pip-version-check -q "$paq" || log "✖ no pude instalar: $paq"
+        done < "$DIR/requirements.txt"
     fi
 }
 
