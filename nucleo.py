@@ -21,6 +21,11 @@ class Asistente:
         self.historial += memoria.cargar_historial_reciente()
         llm.precalentar_ollama()
 
+    def recargar_historial(self):
+        """Vuelve a armar la conversación en curso desde la memoria (p. ej. después de borrar pedidos del historial)."""
+        with self._lock:
+            self.historial = [self.historial[0]] + memoria.cargar_historial_reciente()
+
     def responder(self, texto: str) -> str:
         with self._lock:
             # El system prompt se rearma en cada turno: hora, nombre, reglas y los recuerdos que vienen al caso.

@@ -175,12 +175,43 @@ def historial(limite: int = 150):
 def prompts(q: str = "", limite: int = 400):
     """Todo lo que el usuario ha pedido (el más nuevo primero), opcionalmente filtrado por texto."""
     limite = max(1, min(limite, 5000))
-    todos = memoria.todos_los_prompts(5000)
+    todos = memoria.prompts_con_id(5000)
     plano = memoria._sin_acentos(q.strip())
     if plano:
-        todos = [(f, t) for f, t in todos if plano in memoria._sin_acentos(t)]
+        todos = [(u, f, t) for u, f, t in todos if plano in memoria._sin_acentos(t)]
     todos.reverse()
-    return {"total": len(todos), "prompts": [{"fecha": f, "texto": t} for f, t in todos[:limite]]}
+    return {"total": len(todos), "prompts": [{"id": u, "fecha": f, "texto": t} for u, f, t in todos[:limite]]}
+
+
+@app.post("/api/prompts/borrar", dependencies=[Depends(exigir_sesion)])
+async def borrar_prompts(request: Request):
+    """
+    Borra pedidos del historial (y la respuesta que dieron), también de la nube.
+    Cuerpo: {"ids": [...]}  ·  {"q": "texto"} (todos los que coinciden)  ·  {"todo": true}
+    """
+    try:
+        datos = await request.json()
+    except Exception:
+        raise HTTPException(400, "Petición inválida.")
+    import anyio
+
+    def _borrar():
+        if datos.get("todo") is True:
+            n = memoria.borrar_todo_el_historial()
+        elif str(datos.get("q", "")).strip():
+            plano = memoria._sin_acentos(str(datos["q"]).strip())
+            ids = [u for u, _, t in memoria.prompts_con_id(5000) if plano in memoria._sin_acentos(t)]
+            n = memoria.borrar_prompts(ids)
+        else:
+            ids = datos.get("ids")
+            if not isinstance(ids, list) or not all(isinstance(i, str) for i in ids):
+                raise HTTPException(400, "Indica qué borrar.")
+            n = memoria.borrar_prompts(ids[:5000])
+        if _asistente is not None:                 # la conversación en curso también los olvida
+            _asistente.recargar_historial()
+        return n
+
+    return {"borrados": await anyio.to_thread.run_sync(_borrar)}
 
 
 @app.post("/api/transcribir", dependencies=[Depends(exigir_sesion)])

@@ -26,6 +26,8 @@ CREATE INDEX IF NOT EXISTS jarvis_conocimiento_act ON jarvis_conocimiento (actua
 CREATE TABLE IF NOT EXISTS jarvis_mensajes (
     uid TEXT PRIMARY KEY, ts TEXT NOT NULL, rol TEXT NOT NULL, contenido TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS jarvis_mensajes_ts ON jarvis_mensajes (ts);
+CREATE TABLE IF NOT EXISTS jarvis_borrados (uid TEXT PRIMARY KEY, ts TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS jarvis_borrados_ts ON jarvis_borrados (ts);
 """
 
 _hilo = None
@@ -75,6 +77,21 @@ def _sincronizar(conn, extras):
                               [(u, t, x, c, cr, ac, bool(a)) for u, t, x, c, cr, ac, a in filas])
         conn.commit()
         memoria.marcar_conocimiento([(f[0], f[5]) for f in filas])
+
+    # ---- borrados (primero, para que lo borrado no se vuelva a subir ni a bajar)
+    borr = memoria.pendientes_borrados()
+    if borr:
+        extras.execute_values(cur, "INSERT INTO jarvis_borrados (uid, ts) VALUES %s ON CONFLICT (uid) DO NOTHING", borr)
+        cur.execute("DELETE FROM jarvis_mensajes WHERE uid = ANY(%s)", ([b[0] for b in borr],))
+        conn.commit()
+        memoria.marcar_borrados([b[0] for b in borr])
+    cursor = memoria.meta_get("nube_cursor_borrados")
+    cur.execute("SELECT uid, ts FROM jarvis_borrados WHERE ts >= %s ORDER BY ts LIMIT 5000", (cursor,))
+    ajenos = cur.fetchall()
+    if ajenos:
+        mayor = memoria.aplicar_remoto_borrados(ajenos)
+        if mayor:
+            memoria.meta_set("nube_cursor_borrados", mayor)
 
     while True:
         msgs = memoria.pendientes_mensajes(500)

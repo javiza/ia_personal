@@ -119,20 +119,52 @@ $("#texto").addEventListener("keydown", (ev) => {
 });
 
 let temporizadorBusqueda = 0;
+async function recargarChat() {          // después de borrar: vuelve a pintar la conversación y la lista de ↑ ↓
+  $("#chat").replaceChildren();
+  try {
+    const h = await api("/api/historial?limite=120");
+    if (h.mensajes.length) {
+      separador(`— conversación anterior (${h.mensajes.length} mensajes; «📜 Historial» muestra todo lo que has pedido) —`);
+      for (const m of h.mensajes) agregar(m.quien === "tu" ? "tu" : "ella", m.texto, m.fecha);
+      separador("— ahora —");
+    }
+    const p = await api("/api/prompts?limite=500");
+    E.pasado = p.prompts.map((x) => x.texto).reverse(); E.pos = E.pasado.length;
+  } catch (e) { /* sin sesión: ya se muestra el login */ }
+}
+
+async function borrarPedidos(cuerpo, aviso) {
+  if (!confirm(`${aviso}\n\nTambién se borra la respuesta que dio. No se puede deshacer.`)) return;
+  try {
+    await api("/api/prompts/borrar", cuerpo);
+    await recargarChat(); await cargarLista();
+  } catch (e) { if (e.message !== "sin sesión") $("#hist-info").textContent = `No pude borrar: ${e.message}`; }
+}
+
 async function cargarLista() {
   const q = $("#hist-buscar").value.trim();
   try {
     const r = await api(`/api/prompts?q=${encodeURIComponent(q)}&limite=300`);
-    $("#hist-info").textContent = `${r.total} pedidos${q ? " con ese texto" : ""} · toca uno para volver a usarlo`;
+    $("#hist-info").textContent = `${r.total} pedidos${q ? " con ese texto" : ""} · toca uno para volver a usarlo · 🗑 para borrarlo`;
+    $("#hist-borrar-q").hidden = !q || r.total === 0;
+    $("#hist-borrar-q").textContent = `🗑 Borrar los ${r.total} que coinciden`;
+    $("#hist-borrar-todo").hidden = !!q && r.total === 0;
     const ul = $("#hist-lista"); ul.replaceChildren();
     for (const p of r.prompts) {
-      const li = document.createElement("li"); li.textContent = p.texto;
-      const s = document.createElement("small"); s.textContent = p.fecha; li.appendChild(s);
-      li.addEventListener("click", () => { $("#texto").value = p.texto; $("#dlg-hist").close(); $("#texto").focus(); });
-      ul.appendChild(li);
+      const li = document.createElement("li");
+      const cuerpo = document.createElement("div"); cuerpo.className = "texto"; cuerpo.textContent = p.texto;
+      const s = document.createElement("small"); s.textContent = p.fecha; cuerpo.appendChild(s);
+      cuerpo.addEventListener("click", () => { $("#texto").value = p.texto; $("#dlg-hist").close(); $("#texto").focus(); });
+      const x = document.createElement("button"); x.className = "borrar"; x.textContent = "🗑"; x.setAttribute("aria-label", "Borrar este pedido");
+      x.addEventListener("click", (ev) => { ev.stopPropagation(); borrarPedidos({ ids: [p.id] }, "¿Borrar este pedido?"); });
+      li.appendChild(cuerpo); li.appendChild(x); ul.appendChild(li);
     }
   } catch (e) { if (e.message !== "sin sesión") $("#hist-info").textContent = `No pude cargar el historial: ${e.message}`; }
 }
+$("#hist-borrar-q").addEventListener("click", () => {
+  const q = $("#hist-buscar").value.trim(); if (q) borrarPedidos({ q }, `¿Borrar todos los pedidos que coinciden con «${q}»?`);
+});
+$("#hist-borrar-todo").addEventListener("click", () => borrarPedidos({ todo: true }, "¿Borrar TODO el historial?"));
 $("#btn-hist").addEventListener("click", () => { $("#hist-buscar").value = ""; $("#dlg-hist").showModal(); cargarLista(); });
 $("#hist-buscar").addEventListener("input", () => { clearTimeout(temporizadorBusqueda); temporizadorBusqueda = setTimeout(cargarLista, 250); });
 

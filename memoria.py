@@ -73,6 +73,9 @@ def _preparar(conn):
         activo INTEGER NOT NULL DEFAULT 1, sync INTEGER NOT NULL DEFAULT 0,
         UNIQUE (tipo, clave))""")
     conn.execute("CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT)")
+    # «Lápidas»: mensajes borrados a propósito. Se suben a la nube para que otros equipos también los borren
+    # y para que no «reaparezcan» al bajar la copia de la nube.
+    conn.execute("CREATE TABLE IF NOT EXISTS borrados (uid TEXT PRIMARY KEY, ts TEXT NOT NULL, sync INTEGER NOT NULL DEFAULT 0)")
 
     # Versiones anteriores guardaban los datos duraderos en la tabla «hechos»: se pasan una sola vez.
     antigua = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='hechos'").fetchone()
@@ -296,6 +299,103 @@ def prompts_relacionados(consulta: str, k: int = 3, excluir_recientes: int = 12)
     return [textos[n][:200] for _, n in puntos[:k]]
 
 
+# ------------------------------------------------------------------ borrar del historial
+def prompts_con_id(limite: int = 5000) -> list[tuple[str, str, str]]:
+    """[(uid, fecha legible, texto)] de lo que el usuario ha pedido, del más antiguo al más reciente."""
+    conn = _conectar()
+    try:
+        filas = conn.execute("SELECT uid, timestamp, contenido FROM mensajes WHERE rol IN ('user','user_error') "
+                             "ORDER BY timestamp DESC, id DESC LIMIT ?", (limite,)).fetchall()
+    finally:
+        conn.close()
+    filas.reverse()
+    return [(u, _hora_local(ts), c) for u, ts, c in filas]
+
+
+def _eliminar(conn, uids) -> int:
+    uids = list(dict.fromkeys(uids))
+    ahora = _ahora()
+    for i in range(0, len(uids), 500):
+        lote = uids[i:i + 500]
+        conn.executemany("INSERT OR IGNORE INTO borrados (uid, ts, sync) VALUES (?, ?, 0)", [(u, ahora) for u in lote])
+        conn.execute(f"DELETE FROM mensajes WHERE uid IN ({','.join('?' * len(lote))})", lote)
+    conn.commit()
+    return len(uids)
+
+
+def borrar_prompts(uids) -> int:
+    """
+    Borra esos pedidos Y la respuesta que les dio (el mensaje que viene justo después). Se borra también de la nube
+    y de la memoria de la conversación en curso. Devuelve cuántos pedidos se borraron.
+    (Lo que ella «aprendió» de ti —reglas, datos, lecciones— no se toca: eso se gestiona con «olvida lo de…».)
+    """
+    objetivo = set(uids or [])
+    if not objetivo:
+        return 0
+    conn = _conectar()
+    try:
+        filas = conn.execute("SELECT uid, rol FROM mensajes ORDER BY timestamp, id").fetchall()
+        borrar, n = [], 0
+        for i, (uid, rol) in enumerate(filas):
+            if uid in objetivo and rol in ROLES_PROMPT:
+                borrar.append(uid)
+                n += 1
+                if i + 1 < len(filas) and filas[i + 1][1] == "assistant":
+                    borrar.append(filas[i + 1][0])
+        if borrar:
+            _eliminar(conn, borrar)
+    finally:
+        conn.close()
+    if n:
+        _avisar_nube()
+    return n
+
+
+def borrar_todo_el_historial() -> int:
+    """Borra TODOS los mensajes (pedidos y respuestas). Devuelve cuántos pedidos había."""
+    conn = _conectar()
+    try:
+        n = conn.execute("SELECT COUNT(*) FROM mensajes WHERE rol IN ('user','user_error')").fetchone()[0]
+        uids = [u for (u,) in conn.execute("SELECT uid FROM mensajes").fetchall()]
+        if uids:
+            _eliminar(conn, uids)
+    finally:
+        conn.close()
+    if uids:
+        _avisar_nube()
+    return n
+
+
+def pendientes_borrados():
+    conn = _conectar()
+    try:
+        return conn.execute("SELECT uid, ts FROM borrados WHERE sync=0").fetchall()
+    finally:
+        conn.close()
+
+
+def marcar_borrados(uids):
+    conn = _conectar()
+    conn.executemany("UPDATE borrados SET sync=1 WHERE uid=?", [(u,) for u in uids])
+    conn.commit()
+    conn.close()
+
+
+def aplicar_remoto_borrados(filas) -> str:
+    """Otro equipo borró estos mensajes: se borran aquí también. Devuelve el mayor 'ts'."""
+    conn = _conectar()
+    mayor = ""
+    try:
+        for uid, ts in filas:
+            mayor = max(mayor, ts)
+            conn.execute("INSERT OR IGNORE INTO borrados (uid, ts, sync) VALUES (?, ?, 1)", (uid, ts))
+            conn.execute("DELETE FROM mensajes WHERE uid=?", (uid,))
+        conn.commit()
+    finally:
+        conn.close()
+    return mayor
+
+
 # ------------------------------------------------------------------ conocimiento
 def guardar(tipo: str, texto: str) -> str:
     """
@@ -462,6 +562,8 @@ def aplicar_remoto_mensajes(filas) -> str:
     try:
         for uid, ts, rol, contenido in filas:
             mayor = max(mayor, ts)
+            if conn.execute("SELECT 1 FROM borrados WHERE uid=?", (uid,)).fetchone():
+                continue                    # lo borraste a propósito: no vuelve
             conn.execute("INSERT OR IGNORE INTO mensajes (timestamp, rol, contenido, uid, sync) VALUES (?,?,?,?,1)",
                          (ts, rol, contenido, uid))
         conn.commit()

@@ -19,9 +19,10 @@ if sys.platform.startswith("linux") and os.environ.get("XDG_SESSION_TYPE") == "w
     os.environ.setdefault("QT_QPA_PLATFORM", "xcb")
 
 from PySide6.QtCore import QObject, QPoint, QPointF, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QFont, QMovie, QPainter, QPainterPath, QPen, QPixmap, QPolygonF, QRadialGradient
+from PySide6.QtGui import (QColor, QFont, QKeySequence, QMovie, QPainter, QPainterPath, QPen, QPixmap, QPolygonF,
+                           QRadialGradient, QShortcut)
 from PySide6.QtWidgets import (QApplication, QCheckBox, QDialog, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
-                               QListWidget, QListWidgetItem, QMenu, QPushButton, QTextBrowser, QVBoxLayout, QWidget)
+                               QListWidget, QListWidgetItem, QMenu, QMessageBox, QPushButton, QTextBrowser, QVBoxLayout, QWidget)
 
 import ajustes
 import config
@@ -49,6 +50,7 @@ class Puente(QObject):
     ver_ventanas = Signal()
     abrir_chat = Signal()
     texto_escrito = Signal(str, bool)   # (lo que escribiste, ¿leerlo en voz alta?)
+    historial_cambiado = Signal()       # se borraron pedidos del historial: refrescar el chat y la memoria de la conversación
     voz_modo = Signal(bool)             # True = se le habla por voz · False = solo escritura (micrófono apagado)
 
 
@@ -97,6 +99,9 @@ QPushButton { background: #5ee7ff; color: #06182e; border: none; border-radius: 
 QPushButton:hover { background: #8ff0ff; }
 QPushButton#suave { background: #16294d; color: #cfe6ff; font-weight: normal; padding: 6px 12px; }
 QPushButton#suave:hover { background: #1d3a66; }
+QPushButton#peligro { background: #3a1f2b; color: #ff9fb0; border: 1px solid #ff6b81; font-weight: normal; padding: 6px 10px; }
+QPushButton#peligro:hover { background: #4d2736; }
+QPushButton#peligro:disabled { background: #141c2e; color: #4b5b78; border: 1px solid #25406b; }
 QPushButton#voz { background: #4ade80; color: #04210f; padding: 6px 12px; }
 QPushButton#voz:hover { background: #7cf0a6; }
 QPushButton#voz:!checked { background: #3a1f2b; color: #ff9fb0; border: 1px solid #ff6b81; }
@@ -193,47 +198,130 @@ class CampoPrompt(QLineEdit):
 
 
 class DialogoHistorial(QDialog):
-    """Todo lo que le has pedido, con buscador. Doble clic = volver a usarlo."""
+    """
+    Todo lo que le has pedido, con buscador. Doble clic = volver a usarlo.
+    Se puede borrar: lo seleccionado (Supr), todo lo que coincide con la búsqueda, o todo el historial.
+    Al borrar un pedido también se borra la respuesta que dio.
+    """
 
     def __init__(self, padre, prompts):
         super().__init__(padre)
-        self.setWindowTitle(f"Historial de pedidos ({len(prompts)})")
-        self.resize(540, 540)
+        self.resize(560, 580)
         self.setStyleSheet(ESTILO_CHAT)
-        self.todos = list(reversed(prompts))        # el más nuevo arriba
+        self.todos = list(reversed(prompts))        # [(uid, fecha, texto)], el más nuevo arriba
+        self.visibles: list[str] = []               # uids que coinciden con la búsqueda actual
         self.elegido = None
+        self.cambio = False                         # ¿se borró algo? (el chat se refresca al cerrar)
         self.buscar = QLineEdit()
         self.buscar.setPlaceholderText("Buscar en todo lo que has pedido…")
         self.lista = QListWidget()
+        self.lista.setSelectionMode(QListWidget.ExtendedSelection)
         self.info = QLabel("")
         self.info.setObjectName("estado")
+        self.btn_sel = QPushButton("🗑 Borrar seleccionados")
+        self.btn_vis = QPushButton("🗑 Borrar los que coinciden")
+        self.btn_todo = QPushButton("🗑 Borrar todo")
+        for b in (self.btn_sel, self.btn_vis, self.btn_todo):
+            b.setObjectName("peligro")
+            b.setCursor(Qt.PointingHandCursor)
+        fila = QHBoxLayout()
+        fila.addWidget(self.btn_sel)
+        fila.addWidget(self.btn_vis)
+        fila.addWidget(self.btn_todo)
         caja = QVBoxLayout(self)
         caja.addWidget(self.buscar)
         caja.addWidget(self.lista, 1)
         caja.addWidget(self.info)
+        caja.addLayout(fila)
         self.buscar.textChanged.connect(self.filtrar)
         self.lista.itemActivated.connect(self._elegir)
         self.lista.itemDoubleClicked.connect(self._elegir)
+        self.lista.itemSelectionChanged.connect(self._botones)
+        self.btn_sel.clicked.connect(self.borrar_seleccionados)
+        self.btn_vis.clicked.connect(self.borrar_visibles)
+        self.btn_todo.clicked.connect(self.borrar_todo)
+        QShortcut(QKeySequence.Delete, self.lista, activated=self.borrar_seleccionados)
         self.filtrar("")
         self.buscar.setFocus()
+
+    def _titulo(self):
+        self.setWindowTitle(f"Historial de pedidos ({len(self.todos)})")
+
+    def _botones(self):
+        n = len(self.lista.selectedItems())
+        self.btn_sel.setEnabled(n > 0)
+        self.btn_sel.setText(f"🗑 Borrar seleccionados ({n})" if n else "🗑 Borrar seleccionados")
+        self.btn_vis.setEnabled(bool(self.visibles))
+        self.btn_vis.setText(f"🗑 Borrar los {len(self.visibles)} que coinciden" if self.buscar.text().strip()
+                             else "🗑 Borrar los que coinciden")
+        self.btn_vis.setVisible(bool(self.buscar.text().strip()))      # sin búsqueda sería igual a «Borrar todo»
+        self.btn_todo.setEnabled(bool(self.todos))
 
     def filtrar(self, consulta: str):
         q = _plano(consulta.strip())
         self.lista.clear()
-        coinciden = 0
-        for fecha, texto in self.todos:
+        self.visibles = []
+        for uid, fecha, texto in self.todos:
             if q in _plano(texto):
-                coinciden += 1
+                self.visibles.append(uid)
                 if self.lista.count() < 500:
                     item = QListWidgetItem(f"{fecha}   {texto}")
                     item.setData(Qt.UserRole, texto)
+                    item.setData(Qt.UserRole + 1, uid)
                     item.setToolTip(texto)
                     self.lista.addItem(item)
-        self.info.setText(f"{coinciden} de {len(self.todos)} pedidos · doble clic para volver a usar uno")
+        self.info.setText(f"{len(self.visibles)} de {len(self.todos)} pedidos · doble clic: volver a usar · "
+                          f"Supr: borrar lo seleccionado")
+        self._titulo()
+        self._botones()
 
     def _elegir(self, item):
         self.elegido = item.data(Qt.UserRole)
         self.accept()
+
+    # ------------------------------------------------------------ borrar
+    def _confirmar(self, texto: str) -> bool:
+        caja = QMessageBox(self)
+        caja.setIcon(QMessageBox.Warning)
+        caja.setWindowTitle("Borrar del historial")
+        caja.setText(texto)
+        caja.setInformativeText("También se borra la respuesta que dio. No se puede deshacer.")
+        caja.setStandardButtons(QMessageBox.Yes | QMessageBox.Cancel)
+        caja.setDefaultButton(QMessageBox.Cancel)
+        caja.button(QMessageBox.Yes).setText("Borrar")
+        caja.button(QMessageBox.Cancel).setText("Cancelar")
+        return caja.exec() == QMessageBox.Yes
+
+    def _borrar(self, uids):
+        try:
+            memoria.borrar_prompts(uids)
+        except Exception as e:
+            QMessageBox.warning(self, "Historial", f"No pude borrar: {e}")
+            return
+        fuera = set(uids)
+        self.todos = [t for t in self.todos if t[0] not in fuera]
+        self.cambio = True
+        self.filtrar(self.buscar.text())
+
+    def borrar_seleccionados(self):
+        uids = [i.data(Qt.UserRole + 1) for i in self.lista.selectedItems()]
+        if uids and self._confirmar(f"¿Borrar {len(uids)} pedido(s) seleccionado(s)?"):
+            self._borrar(uids)
+
+    def borrar_visibles(self):
+        if self.visibles and self._confirmar(f"¿Borrar los {len(self.visibles)} pedidos que coinciden con «{self.buscar.text().strip()}»?"):
+            self._borrar(list(self.visibles))
+
+    def borrar_todo(self):
+        if self.todos and self._confirmar(f"¿Borrar TODO el historial ({len(self.todos)} pedidos)?"):
+            try:
+                memoria.borrar_todo_el_historial()
+            except Exception as e:
+                QMessageBox.warning(self, "Historial", f"No pude borrar: {e}")
+                return
+            self.todos = []
+            self.cambio = True
+            self.filtrar("")
 
 
 class Chat(QWidget):
@@ -338,14 +426,22 @@ class Chat(QWidget):
 
     def abrir_historial(self):
         try:
-            prompts = memoria.todos_los_prompts(5000)
+            prompts = memoria.prompts_con_id(5000)
         except Exception as e:
             self._agregar("aviso", f"No pude leer el historial: {e}")
             return
         dlg = DialogoHistorial(self, prompts)
-        if dlg.exec() == QDialog.Accepted and dlg.elegido:
+        aceptado = dlg.exec() == QDialog.Accepted
+        if dlg.cambio:                                   # se borró algo: el chat y la memoria de la conversación se ponen al día
+            self.refrescar_conversacion()
+            self.puente.historial_cambiado.emit()
+        if aceptado and dlg.elegido:
             self.entrada.setText(dlg.elegido)
             self.entrada.setFocus()
+
+    def refrescar_conversacion(self):
+        self.historial.clear()
+        self._cargar_conversacion_previa()
 
     # ------------------------------------------------------------ mensajes
     def _agregar(self, quien: str, texto: str, fecha: str = ""):

@@ -61,6 +61,7 @@ Todo lo que pides (por voz o por escrito, incluso lo que falló por falta de int
 
 - **Chat**: al abrirlo muestra la conversación anterior. **↑ / ↓** en la caja de texto recorren tus pedidos pasados (como una terminal).
 - **📜 Historial**: lista y buscador de *todo* lo que has pedido; doble clic lo vuelve a poner en la caja.
+- **Borrar**: en el historial, 🗑 borra un pedido (en el escritorio: selecciona uno o varios y pulsa **Supr** o el botón), **«Borrar los que coinciden»** borra todo lo que muestra la búsqueda (útil para borrar un tema entero) y **«Borrar todo»** vacía el historial. Siempre pide confirmación y también borra la respuesta que dio. El borrado llega a la nube (y a tu otro dispositivo) y no reaparece. Lo que ella *aprendió* de ti (reglas, datos, lecciones) no se toca: para eso, «olvida lo de …».
 - **Por voz**: «¿qué te pedí ayer sobre turismo?», «¿cuál fue mi último pedido?» (herramienta `buscar_en_historial`).
 - Además, antes de responder se le muestran hasta 3 pedidos antiguos parecidos al actual, para que tenga contexto sin llenar el prompt.
 

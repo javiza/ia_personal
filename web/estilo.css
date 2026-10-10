@@ -71,4 +71,10 @@ button.voz[aria-pressed=false] { background: #3a1f2b; color: #ff9fb0; border: 1p
 .lista { list-style: none; padding: 0; margin: 0; overflow-y: auto; max-height: 58dvh; }
 .lista li { padding: 10px 6px; border-bottom: 1px solid #16294d; cursor: pointer; overflow-wrap: anywhere; }
 .lista li:active { background: #1d3a66; }
+.lista li { display: flex; gap: 10px; align-items: flex-start; }
+.lista .texto { flex: 1; min-width: 0; }
+.lista .borrar { flex: none; background: none; color: var(--rojo); font-size: 18px; padding: 4px 8px; border-radius: 10px; }
+.lista .borrar:active { background: #3a1f2b; }
+.dlg-pie { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+button.peligro { background: #3a1f2b; color: #ff9fb0; border: 1px solid var(--rojo); font-weight: 500; padding: 8px 12px; font-size: 14px; }
 .lista small { display: block; color: #5c7396; }

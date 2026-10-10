@@ -157,6 +157,7 @@ def main():
 
     ajustes.suscribir_cambio_nombre(lambda n: puente.nombre.emit(n))   # funciona aunque cambie desde otro hilo
     puente.activar.connect(manual.set)
+    puente.historial_cambiado.connect(lambda: threading.Thread(target=asistente.recargar_historial, daemon=True).start())
 
     def procesar_escrito(texto: str, leer_en_voz_alta: bool):
         """Atiende un mensaje escrito en el chat (en su propio hilo, sin congelar la ventana)."""
