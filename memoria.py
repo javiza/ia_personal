@@ -1,0 +1,362 @@
+"""
+Memoria persistente (SQLite local + copia en la nube, ver nube.py).
+
+Qué se guarda:
+  - mensajes:     lo que se dijo (para retomar la conversación al reiniciar).
+  - conocimiento: lo que ella APRENDE de ti, de tres tipos:
+        instruccion  reglas permanentes que le das («responde siempre corto», «cuando diga X haz Y»)
+        hecho        datos duraderos sobre ti y tu mundo («trabaja con Next.js», «su hija se llama Ana»)
+        leccion      correcciones: errores que cometió y no debe repetir
+
+Todo se guarda PRIMERO en este equipo (rápido, funciona sin internet) y nube.py lo copia a Postgres
+en segundo plano. Nada de aquí espera nunca a la red. Los borrados son «suaves» (activo=0) para que
+también se propaguen a la nube.
+"""
+import datetime
+import math
+import re
+import sqlite3
+import threading
+import unicodedata
+import uuid
+from collections import Counter
+
+import config
+
+TIPOS = ("hecho", "instruccion", "leccion")
+_MAX_TEXTO = 300
+
+_init_lock = threading.Lock()
+_listo = False
+
+
+def _ahora() -> str:
+    return datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
+
+
+# ------------------------------------------------------------------ base local
+def _conectar():
+    global _listo
+    conn = sqlite3.connect(config.DB_PATH, timeout=15)
+    if not _listo:
+        with _init_lock:
+            if not _listo:
+                _preparar(conn)
+                _listo = True
+    return conn
+
+
+def _columnas(conn, tabla):
+    return {f[1] for f in conn.execute(f"PRAGMA table_info({tabla})")}
+
+
+def _preparar(conn):
+    """Crea las tablas y migra lo que dejaron versiones anteriores (sin perder nada)."""
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")      # lector y sincronizador a la vez sin «database is locked»
+    except sqlite3.DatabaseError:
+        pass
+    conn.execute("""CREATE TABLE IF NOT EXISTS mensajes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT NOT NULL, rol TEXT NOT NULL, contenido TEXT NOT NULL)""")
+    cols = _columnas(conn, "mensajes")
+    if "uid" not in cols:
+        conn.execute("ALTER TABLE mensajes ADD COLUMN uid TEXT")
+    if "sync" not in cols:
+        conn.execute("ALTER TABLE mensajes ADD COLUMN sync INTEGER NOT NULL DEFAULT 0")
+    for (i,) in conn.execute("SELECT id FROM mensajes WHERE uid IS NULL").fetchall():
+        conn.execute("UPDATE mensajes SET uid=? WHERE id=?", (uuid.uuid4().hex, i))
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS mensajes_uid ON mensajes(uid)")
+
+    conn.execute("""CREATE TABLE IF NOT EXISTS conocimiento (
+        uid TEXT PRIMARY KEY, tipo TEXT NOT NULL, texto TEXT NOT NULL, clave TEXT NOT NULL,
+        creado TEXT NOT NULL, actualizado TEXT NOT NULL,
+        activo INTEGER NOT NULL DEFAULT 1, sync INTEGER NOT NULL DEFAULT 0,
+        UNIQUE (tipo, clave))""")
+    conn.execute("CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT)")
+
+    # Versiones anteriores guardaban los datos duraderos en la tabla «hechos»: se pasan una sola vez.
+    antigua = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='hechos'").fetchone()
+    migrado = conn.execute("SELECT v FROM meta WHERE k='hechos_migrados'").fetchone()
+    if antigua and not migrado:
+        for ts, texto in conn.execute("SELECT timestamp, texto FROM hechos").fetchall():
+            conn.execute("INSERT OR IGNORE INTO conocimiento (uid, tipo, texto, clave, creado, actualizado) "
+                         "VALUES (?, 'hecho', ?, ?, ?, ?)", (uuid.uuid4().hex, texto, _clave(texto), ts, ts))
+        conn.execute("INSERT OR REPLACE INTO meta (k, v) VALUES ('hechos_migrados', '1')")
+    conn.commit()
+
+
+def _avisar_nube():
+    try:
+        import nube
+        nube.avisar()
+    except Exception:
+        pass
+
+
+def iniciar():
+    """Prepara la base local y arranca la copia en la nube (si hay JARVIS_DATABASE_URL). Nunca falla."""
+    try:
+        _conectar().close()
+    except Exception as e:
+        print(f"⚠️  Memoria local: {e}")
+    try:
+        import nube
+        nube.iniciar()
+    except Exception as e:
+        print(f"⚠️  Memoria en la nube desactivada: {e}")
+
+
+def meta_get(k, defecto=""):
+    conn = _conectar()
+    try:
+        f = conn.execute("SELECT v FROM meta WHERE k=?", (k,)).fetchone()
+        return f[0] if f else defecto
+    finally:
+        conn.close()
+
+
+def meta_set(k, v):
+    conn = _conectar()
+    conn.execute("INSERT OR REPLACE INTO meta (k, v) VALUES (?, ?)", (k, v))
+    conn.commit()
+    conn.close()
+
+
+# ------------------------------------------------------------------ texto: claves, palabras y filtros
+def _sin_acentos(t: str) -> str:
+    return "".join(c for c in unicodedata.normalize("NFD", t.lower()) if unicodedata.category(c) != "Mn")
+
+
+_PARADAS = set("""el la los las un una unos unas de del al y o u e a en con por para que se su sus mi mis tu tus
+lo le les me te nos es son ser fue ha han he hay como mas pero si no ya muy sobre entre este esta estos estas ese esa
+usuario siempre cuando donde quien cual cuales todo toda todos todas sus""".split())
+
+
+def _tokens(texto: str) -> list[str]:
+    """Palabras «raíz» (primeras 5 letras): así «proyectos» y «proyecto» coinciden."""
+    palabras = re.findall(r"[a-z0-9ñ]+", _sin_acentos(texto or ""))
+    return [p[:5] for p in palabras if len(p) > 2 and p not in _PARADAS]
+
+
+def _clave(texto: str) -> str:
+    return " ".join(re.findall(r"[a-z0-9ñ]+", _sin_acentos(texto or "")))
+
+
+_RE_SENSIBLE = re.compile(
+    r"(contrase[ñn]a|password|passwd|\bcvv\b|api[_ -]?key|\bsecret\b|token de acceso|\bsk-[A-Za-z0-9]{10,}|\bgsk_\w+"
+    r"|(?:\d[ -]?){13,19}|\b\d{1,2}\.?\d{3}\.?\d{3}-[\dkK]\b)", re.I)
+
+
+def es_sensible(texto: str) -> bool:
+    """Contraseñas, claves de API, números de tarjeta, RUT: nunca se guardan (ni local ni en la nube)."""
+    return bool(_RE_SENSIBLE.search(texto or ""))
+
+
+def _parecidos(a: set, b: set) -> bool:
+    return bool(a and b) and len(a & b) / len(a | b) >= 0.8
+
+
+# ------------------------------------------------------------------ mensajes
+def guardar_mensaje(rol: str, contenido: str):
+    conn = _conectar()
+    conn.execute("INSERT INTO mensajes (timestamp, rol, contenido, uid, sync) VALUES (?, ?, ?, ?, 0)",
+                 (_ahora(), rol, contenido, uuid.uuid4().hex))
+    conn.commit()
+    conn.close()
+    _avisar_nube()
+
+
+def cargar_historial_reciente(limite: int = None) -> list[dict]:
+    limite = limite or config.MAX_HISTORY_MESSAGES
+    conn = _conectar()
+    filas = conn.execute("SELECT rol, contenido FROM mensajes ORDER BY id DESC LIMIT ?", (limite,)).fetchall()
+    conn.close()
+    filas.reverse()
+    # Se descartan avisos de error y salidas rotas guardadas por versiones anteriores: el modelo
+    # las imitaba («Llegué al límite…», «hola.txt creado» sin haberlo creado, bucles de «…»).
+    malos = ("llegué al límite", "el modelo respondió error", "no pude pensar la respuesta",
+             "se agotó el uso gratuito", "me enredé usando", "tuve un problema")
+    limpias = []
+    for rol, contenido in filas:
+        bajo = contenido.lower()
+        if rol == "assistant" and (any(x in bajo for x in malos) or contenido.count(" ") > 5
+                                   or contenido.count("…") > 8):
+            if limpias and limpias[-1]["role"] == "user":
+                limpias.pop()            # y la pregunta que se quedó sin respuesta buena
+            continue
+        limpias.append({"role": rol, "content": contenido})
+    return limpias
+
+
+# ------------------------------------------------------------------ conocimiento
+def guardar(tipo: str, texto: str) -> str:
+    """
+    Guarda una instrucción, un hecho o una lección.
+    Devuelve: 'nuevo' | 'repetido' (ya lo sabía, o casi igual) | 'sensible' | 'vacio'.
+    """
+    if tipo not in TIPOS:
+        raise ValueError(f"tipo desconocido: {tipo}")
+    texto = " ".join((texto or "").split())[:_MAX_TEXTO]
+    if len(texto) < 4:
+        return "vacio"
+    if es_sensible(texto):
+        return "sensible"
+    clave, ahora = _clave(texto), _ahora()
+    conn = _conectar()
+    try:
+        fila = conn.execute("SELECT uid, activo FROM conocimiento WHERE tipo=? AND clave=?", (tipo, clave)).fetchone()
+        if fila and fila[1]:
+            return "repetido"
+        if fila:                                    # estaba borrado: se reactiva
+            conn.execute("UPDATE conocimiento SET texto=?, activo=1, actualizado=?, sync=0 WHERE uid=?",
+                         (texto, ahora, fila[0]))
+        else:
+            nuevos = set(_tokens(texto))
+            for (t,) in conn.execute("SELECT texto FROM conocimiento WHERE tipo=? AND activo=1", (tipo,)):
+                if _parecidos(nuevos, set(_tokens(t))):
+                    return "repetido"
+            conn.execute("INSERT INTO conocimiento (uid, tipo, texto, clave, creado, actualizado) VALUES (?,?,?,?,?,?)",
+                         (uuid.uuid4().hex, tipo, texto, clave, ahora, ahora))
+        conn.commit()
+    finally:
+        conn.close()
+    _avisar_nube()
+    return "nuevo"
+
+
+def _filas(tipo: str):
+    conn = _conectar()
+    try:
+        return conn.execute("SELECT texto, actualizado FROM conocimiento WHERE tipo=? AND activo=1 "
+                            "ORDER BY actualizado, rowid", (tipo,)).fetchall()
+    finally:
+        conn.close()
+
+
+def listar(tipo: str, limite: int = 60) -> list[str]:
+    return [t for t, _ in _filas(tipo)][-limite:]
+
+
+def instrucciones() -> list[str]:
+    """Todas las reglas permanentes (son pocas y siempre deben cumplirse)."""
+    return listar("instruccion", config.MAX_INSTRUCCIONES_EN_PROMPT)
+
+
+def relevantes(consulta: str, tipo: str, k: int, recientes: int = 0) -> list[str]:
+    """
+    Los k conocimientos más parecidos a lo que se pregunta (por palabras compartidas, dando más peso a
+    las poco comunes) + los más recientes. Así el prompt no crece aunque ella sepa mil cosas.
+    """
+    textos = [t for t, _ in _filas(tipo)]
+    if len(textos) <= k + recientes:
+        return textos
+    docs = [set(_tokens(t)) for t in textos]
+    df = Counter(w for d in docs for w in d)
+    q = set(_tokens(consulta))
+    puntos = sorted(((sum(math.log(1 + len(docs) / df[w]) for w in q & d), i) for i, d in enumerate(docs) if q & d),
+                    reverse=True)
+    elegidos = [i for _, i in puntos[:k]]
+    for i in range(len(textos) - 1, len(textos) - 1 - recientes, -1):
+        if i not in elegidos:
+            elegidos.append(i)
+    return [textos[i] for i in sorted(elegidos)]
+
+
+def olvidar(fragmento: str, tipo: str = None) -> int:
+    """Borra (de forma suave) lo que contenga 'fragmento'. Devuelve cuántos."""
+    fragmento = (fragmento or "").strip()
+    if len(fragmento) < 3:
+        return 0
+    conn = _conectar()
+    sql = "UPDATE conocimiento SET activo=0, actualizado=?, sync=0 WHERE activo=1 AND texto LIKE ?"
+    args = [_ahora(), f"%{fragmento}%"]
+    if tipo:
+        sql += " AND tipo=?"
+        args.append(tipo)
+    n = conn.execute(sql, args).rowcount
+    conn.commit()
+    conn.close()
+    if n:
+        _avisar_nube()
+    return n
+
+
+def resumen() -> dict:
+    conn = _conectar()
+    try:
+        cuenta = dict(conn.execute("SELECT tipo, COUNT(*) FROM conocimiento WHERE activo=1 GROUP BY tipo").fetchall())
+        pend = conn.execute("SELECT (SELECT COUNT(*) FROM conocimiento WHERE sync=0) + "
+                            "(SELECT COUNT(*) FROM mensajes WHERE sync=0)").fetchone()[0]
+        mensajes = conn.execute("SELECT COUNT(*) FROM mensajes").fetchone()[0]
+    finally:
+        conn.close()
+    return {"cuenta": cuenta, "pendientes": pend, "mensajes": mensajes}
+
+
+# ------------------------------------------------------------------ interfaz para nube.py
+def pendientes_conocimiento():
+    conn = _conectar()
+    try:
+        return conn.execute("SELECT uid, tipo, texto, clave, creado, actualizado, activo FROM conocimiento "
+                            "WHERE sync=0").fetchall()
+    finally:
+        conn.close()
+
+
+def pendientes_mensajes(limite=500):
+    conn = _conectar()
+    try:
+        return conn.execute("SELECT uid, timestamp, rol, contenido FROM mensajes WHERE sync=0 ORDER BY id LIMIT ?",
+                            (limite,)).fetchall()
+    finally:
+        conn.close()
+
+
+def marcar_conocimiento(pares):
+    """pares: [(uid, actualizado)]. Solo se marca si no cambió mientras se subía."""
+    conn = _conectar()
+    conn.executemany("UPDATE conocimiento SET sync=1 WHERE uid=? AND actualizado=?", pares)
+    conn.commit()
+    conn.close()
+
+
+def marcar_mensajes(uids):
+    conn = _conectar()
+    conn.executemany("UPDATE mensajes SET sync=1 WHERE uid=?", [(u,) for u in uids])
+    conn.commit()
+    conn.close()
+
+
+def aplicar_remoto_conocimiento(filas) -> str:
+    """Mezcla lo que hay en la nube (otro equipo, o una copia anterior). Gana el más reciente. Devuelve el mayor 'actualizado'."""
+    conn = _conectar()
+    mayor = ""
+    try:
+        for uid, tipo, texto, clave, creado, actualizado, activo in filas:
+            mayor = max(mayor, actualizado)
+            local = conn.execute("SELECT actualizado FROM conocimiento WHERE uid=?", (uid,)).fetchone()
+            if local:
+                if actualizado > local[0]:
+                    conn.execute("UPDATE conocimiento SET texto=?, activo=?, actualizado=?, sync=1 WHERE uid=?",
+                                 (texto, int(bool(activo)), actualizado, uid))
+            elif not conn.execute("SELECT 1 FROM conocimiento WHERE tipo=? AND clave=?", (tipo, clave)).fetchone():
+                conn.execute("INSERT INTO conocimiento (uid, tipo, texto, clave, creado, actualizado, activo, sync) "
+                             "VALUES (?,?,?,?,?,?,?,1)", (uid, tipo, texto, clave, creado, actualizado, int(bool(activo))))
+        conn.commit()
+    finally:
+        conn.close()
+    return mayor
+
+
+def aplicar_remoto_mensajes(filas) -> str:
+    conn = _conectar()
+    mayor = ""
+    try:
+        for uid, ts, rol, contenido in filas:
+            mayor = max(mayor, ts)
+            conn.execute("INSERT OR IGNORE INTO mensajes (timestamp, rol, contenido, uid, sync) VALUES (?,?,?,?,1)",
+                         (ts, rol, contenido, uid))
+        conn.commit()
+    finally:
+        conn.close()
+    return mayor

@@ -1,0 +1,69 @@
+"""
+Ajustes que cambian mientras usas el asistente (nombre, posición del avatar).
+Se guardan en ajustes.json junto al programa.
+"""
+import json
+import os
+import threading
+import config
+
+_RUTA = os.path.join(config.BASE_DIR, "ajustes.json")
+_lock = threading.Lock()
+_suscriptores = []   # funciones que se avisan cuando cambia el nombre (ej. la interfaz)
+
+
+def _leer() -> dict:
+    try:
+        with open(_RUTA, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _escribir(datos: dict):
+    with open(_RUTA, "w", encoding="utf-8") as f:
+        json.dump(datos, f, ensure_ascii=False, indent=2)
+
+
+def obtener_nombre() -> str:
+    return _leer().get("nombre") or config.NOMBRE_POR_DEFECTO
+
+
+def limpiar_nombre(nombre: str) -> str:
+    """Deja solo un nombre razonable: sin saltos de línea, máx. 30 caracteres."""
+    nombre = " ".join((nombre or "").split()).strip(" .,;:!¡?¿\"'")
+    return nombre[:30]
+
+
+def guardar_nombre(nombre: str) -> str:
+    nombre = limpiar_nombre(nombre)
+    if not nombre:
+        raise ValueError("El nombre no puede estar vacío.")
+    with _lock:
+        datos = _leer()
+        datos["nombre"] = nombre
+        _escribir(datos)
+    for cb in list(_suscriptores):
+        try:
+            cb(nombre)
+        except Exception:
+            pass
+    return nombre
+
+
+def suscribir_cambio_nombre(callback):
+    _suscriptores.append(callback)
+
+
+def obtener_posicion():
+    pos = _leer().get("posicion")
+    if isinstance(pos, list) and len(pos) == 2:
+        return int(pos[0]), int(pos[1])
+    return None
+
+
+def guardar_posicion(x: int, y: int):
+    with _lock:
+        datos = _leer()
+        datos["posicion"] = [int(x), int(y)]
+        _escribir(datos)
