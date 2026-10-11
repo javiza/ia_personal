@@ -55,9 +55,18 @@ def construir_system_prompt(consulta: str = "") -> str:
     prompt = _BASE.format(nombre=ajustes.obtener_nombre())
     prompt += f"\nAhora es {_fecha_hora()}.\n"
     if config.MODO_WEB:
-        prompt += ("\nESTÁS EN LA VERSIÓN CELULAR/WEB: el usuario te escribe o te habla desde su teléfono. NO tienes acceso a archivos, "
-                   "pantalla, ventanas ni a crear imágenes, videos o documentos; no ofrezcas hacerlo (si los pide, di en una frase que "
-                   "eso solo está en la versión del computador). Sí puedes buscar en internet, leer páginas, dar el clima y recordar cosas.\n")
+        import espacio
+        prompt += ("\nESTÁS EN LA VERSIÓN CELULAR/WEB: el usuario te escribe o te habla desde su teléfono. NO tienes acceso a pantalla, "
+                   "ventanas ni a crear imágenes o videos; no ofrezcas hacerlo (si los pide, di en una frase que eso solo está en la "
+                   "versión del computador). Sí puedes buscar en internet, leer páginas, dar el clima, recordar cosas y TRABAJAR CON ARCHIVOS.\n"
+                   "ARCHIVOS (web): el usuario sube archivos con el botón 📎 y los guarda en tu espacio de trabajo; todo lo que crees o edites "
+                   "queda ahí y él lo descarga con 📁 Archivos. Usa SOLO nombres simples (sin 'Escritorio' ni rutas del computador). Para leer, "
+                   "editar o crear llama a las herramientas (leer_archivo, reemplazar_en_archivo, escribir_archivo, crear_documento_word, "
+                   "crear_hoja_excel, crear_pdf); para un cambio pequeño en un Word usa reemplazar_en_archivo (conserva el formato). "
+                   "No sobrescribas el original si no te lo piden: guarda la versión nueva con otro nombre (ej. informe_v2.docx) y dile el nombre. "
+                   "Nunca digas que lo hiciste sin llamar a la herramienta. Excepción al «sin markdown»: si el usuario escribe y necesita código, comandos o pasos, "
+                   "usa bloques ``` con el lenguaje y listas con guiones; sigue evitando tablas y emojis.\n"
+                   f"Archivos en tu espacio ahora (el más reciente primero): {espacio.para_prompt()}\n")
     try:
         reglas = memoria.instrucciones()
         hechos = memoria.relevantes(consulta, "hecho", config.MAX_RECUERDOS_EN_PROMPT, recientes=4)

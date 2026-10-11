@@ -227,12 +227,17 @@ def todos_los_prompts(limite: int = 5000) -> list[tuple[str, str]]:
     return [(_hora_local(ts), c) for ts, c in filas]
 
 
-def mensajes_para_chat(limite: int = 150) -> list[tuple[str, str, str]]:
-    """[(fecha, quien, texto)] de la conversación anterior, para mostrarla al abrir el chat."""
+def mensajes_para_chat(limite: int = 150, desde: str = "") -> list[tuple[str, str, str]]:
+    """[(fecha, quien, texto)] de la conversación anterior, para mostrarla al abrir el chat.
+    desde: si se indica, solo los mensajes posteriores a esa marca (así «Limpiar pantalla» no los vuelve a mostrar)."""
     conn = _conectar()
     try:
-        filas = conn.execute("SELECT timestamp, rol, contenido FROM mensajes ORDER BY timestamp DESC, id DESC LIMIT ?",
-                             (limite,)).fetchall()
+        if desde:
+            filas = conn.execute("SELECT timestamp, rol, contenido FROM mensajes WHERE timestamp > ? "
+                                 "ORDER BY timestamp DESC, id DESC LIMIT ?", (desde, limite)).fetchall()
+        else:
+            filas = conn.execute("SELECT timestamp, rol, contenido FROM mensajes ORDER BY timestamp DESC, id DESC LIMIT ?",
+                                 (limite,)).fetchall()
     finally:
         conn.close()
     filas.reverse()

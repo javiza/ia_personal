@@ -6,7 +6,8 @@ Versión WEB / CELULAR de Jarvis: un servidor (FastAPI) + una app instalable (PW
 
 Usa el MISMO cerebro, memoria e historial que la versión de escritorio (nucleo.Asistente). Diferencias:
   - Acceso protegido con una clave (JARVIS_WEB_CLAVE): sin ella el servidor no atiende a nadie.
-  - Modo web: solo herramientas seguras (buscar en internet, leer páginas, clima, memoria). Nada de archivos/pantalla.
+  - Modo web: herramientas seguras (buscar en internet, leer páginas, clima, memoria) y archivos SOLO dentro del
+    «espacio» (espacio.py): ahí subes (📎) lo que quieres que lea/edite y descargas (📁) lo que ella crea. Nada de pantalla.
   - La voz usa el micrófono y el altavoz del teléfono (el navegador); si el navegador no sabe dictar,
     el audio se manda a /api/transcribir (Whisper de Groq).
 """
@@ -25,6 +26,7 @@ from fastapi.staticfiles import StaticFiles
 
 import ajustes
 import config
+import espacio
 import memoria
 
 AQUI = os.path.dirname(os.path.abspath(__file__))
@@ -137,7 +139,8 @@ def estado():
     except Exception:
         pass
     return {"nombre": ajustes.obtener_nombre(), "prompts": memoria.contar_prompts(), "nube": nube_txt,
-            "dictado_servidor": bool(os.environ.get("GROQ_API_KEY"))}
+            "dictado_servidor": bool(os.environ.get("GROQ_API_KEY")),
+            "max_archivo": config.WEB_MAX_ARCHIVO, "extensiones": sorted(config.WEB_EXT_PERMITIDAS)}
 
 
 @app.post("/api/chat", dependencies=[Depends(exigir_sesion)])
@@ -165,10 +168,91 @@ async def chat(request: Request):
     return {"respuesta": respuesta, "ok": ok, "nombre": ajustes.obtener_nombre()}
 
 
+# ------------------------------------------------------------------ archivos (subir, listar, descargar, borrar)
+@app.post("/api/subir", dependencies=[Depends(exigir_sesion)])
+async def subir(request: Request, nombre: str = ""):
+    """Recibe UN archivo como cuerpo crudo (sin multipart) y lo guarda en el espacio de trabajo."""
+    limpio = espacio.nombre_seguro(nombre)
+    if not espacio.extension_ok(limpio):
+        raise HTTPException(415, "Ese tipo de archivo no está permitido (se aceptan documentos, texto, código, imágenes y .zip).")
+    declarado = request.headers.get("content-length", "")
+    if declarado.isdigit() and int(declarado) > config.WEB_MAX_ARCHIVO:
+        raise HTTPException(413, f"El archivo supera el máximo de {config.WEB_MAX_ARCHIVO // (1024 * 1024)} MB.")
+    if len(espacio.listar(config.WEB_MAX_ARCHIVOS + 1)) >= config.WEB_MAX_ARCHIVOS:
+        raise HTTPException(507, "El espacio está lleno de archivos: borra alguno.")
+    libre = config.WEB_MAX_TOTAL - espacio.usado()
+    if libre <= 0:
+        raise HTTPException(507, "El espacio de archivos está lleno: borra alguno.")
+    final = espacio.nombre_libre(limpio)
+    base = espacio.raiz()
+    temporal = os.path.join(base, f".subiendo-{os.getpid()}-{int(time.time() * 1000)}")
+    total = 0
+    try:
+        with open(temporal, "wb") as f:
+            async for trozo in request.stream():
+                total += len(trozo)
+                if total > config.WEB_MAX_ARCHIVO:
+                    raise HTTPException(413, f"El archivo supera el máximo de {config.WEB_MAX_ARCHIVO // (1024 * 1024)} MB.")
+                if total > libre:
+                    raise HTTPException(507, "No queda espacio para ese archivo: borra alguno.")
+                f.write(trozo)
+        if total == 0:
+            raise HTTPException(400, "El archivo está vacío.")
+        os.replace(temporal, os.path.join(base, final))
+    finally:
+        if os.path.exists(temporal):
+            os.remove(temporal)
+    return {"nombre": final, "bytes": total}
+
+
+@app.get("/api/archivos", dependencies=[Depends(exigir_sesion)])
+def archivos():
+    return {"archivos": espacio.listar(), "usado": espacio.usado(), "maximo": config.WEB_MAX_TOTAL}
+
+
+@app.get("/api/archivos/descargar", dependencies=[Depends(exigir_sesion)])
+def descargar(ruta: str):
+    real = espacio.ruta_segura(ruta)
+    if real is None:
+        raise HTTPException(404, "No encontré ese archivo.")
+    return FileResponse(real, filename=os.path.basename(real), media_type="application/octet-stream",
+                        headers={"X-Content-Type-Options": "nosniff", "Cache-Control": "no-store"})
+
+
+@app.post("/api/archivos/borrar", dependencies=[Depends(exigir_sesion)])
+async def borrar_archivos(request: Request):
+    """Cuerpo: {"ruta": "informe.docx"}  ·  {"todo": true}"""
+    try:
+        datos = await request.json()
+    except Exception:
+        raise HTTPException(400, "Petición inválida.")
+    if datos.get("todo") is True:
+        rutas_ = [a["ruta"] for a in espacio.listar()]
+    else:
+        rutas_ = [str(datos.get("ruta", ""))]
+    n = 0
+    for r in rutas_:
+        real = espacio.ruta_segura(r)
+        if real:
+            os.remove(real)
+            n += 1
+    if not n and datos.get("todo") is not True:
+        raise HTTPException(404, "No encontré ese archivo.")
+    return {"borrados": n}
+
+
 @app.get("/api/historial", dependencies=[Depends(exigir_sesion)])
 def historial(limite: int = 150):
     limite = max(1, min(limite, 500))
-    return {"mensajes": [{"fecha": f, "quien": q, "texto": t} for f, q, t in memoria.mensajes_para_chat(limite)]}
+    return {"mensajes": [{"fecha": f, "quien": q, "texto": t}
+                         for f, q, t in memoria.mensajes_para_chat(limite, ajustes.chat_desde())]}
+
+
+@app.post("/api/pantalla/limpiar", dependencies=[Depends(exigir_sesion)])
+def limpiar_pantalla():
+    """«Limpiar pantalla»: la conversación anterior deja de mostrarse. El historial NO se borra (sigue en 📜 y en la memoria)."""
+    ajustes.guardar_chat_desde(memoria._ahora())
+    return {"ok": True}
 
 
 @app.get("/api/prompts", dependencies=[Depends(exigir_sesion)])

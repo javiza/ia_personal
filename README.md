@@ -95,6 +95,18 @@ Cosas a saber:
 - ¿Quieres un `.apk` de verdad (Play Store o instalar el archivo)? Con la dirección de Render, [PWABuilder](https://www.pwabuilder.com) lo genera sin tocar el código.
 - Probar en tu PC antes: `pip install -r requirements-web.txt` y `JARVIS_WEB_CLAVE=algo uvicorn servidor:app --port 8000` → http://localhost:8000 (el micrófono solo funciona en `localhost` o `https`).
 
+## Archivos: subir, editar y crear (celular y computador)
+
+**En el celular / web** hay un espacio de trabajo propio en el servidor (`espacio/`, o `JARVIS_ESPACIO`). Es lo **único** que la asistente puede tocar desde la web.
+
+- **📎** (junto a la caja de texto, o arrastrando archivos en el PC) sube uno o varios archivos: texto, código, `.docx`, `.xlsx`, `.pdf`, `.zip` e imágenes (máx. 15 MB c/u, 150 MB en total).
+- Pídele lo que quieras: «resume el PDF», «cámbiale el título al Word», «pasa esta tabla a Excel», «crea un informe en Word sobre …». Ella lee, edita (con respaldo, conservando el formato del Word cuando se puede) y crea `.txt/.md/código`, Word, Excel y PDF.
+- Cada archivo que crea o modifica aparece en el chat con un enlace **⬇** para descargarlo. **📁 Archivos** lista, descarga y borra todo.
+- Seguridad: nombres saneados, tipos permitidos (nada ejecutable ni `.svg`), sin salir de la carpeta (`..` y enlaces bloqueados), descargas siempre como adjunto, y todo requiere tu clave.
+- **Ojo en Render gratis:** el disco se borra en cada reinicio o deploy. Descarga lo importante, o con un plan pagado monta un *Disk* y pon `JARVIS_ESPACIO=/var/data/espacio`.
+
+**En el computador** el botón **📎** del chat adjunta archivos: si ya están en Escritorio/Documentos/Descargas/Imágenes usa esa ruta; si no, los copia a `~/JarvisArchivos` (el original no se toca) y escribe la ruta en la caja para que completes la orden.
+
 ## Cerebro
 
 `ORDEN_CEREBROS` en `config.py` (se prueban en orden; si uno falla pasa al siguiente):
@@ -120,6 +132,7 @@ aprendizaje automático): `["ollama"]`.
 
 ## Problemas frecuentes
 
+- **«No puedo generar la imagen en este momento»**: el modelo resume el error y esconde la causa. Ejecuta `./venv/bin/python probar_imagen.py`: prueba cada proveedor y dice cuál falla y por qué (sin conexión, falta clave, límite…). Cada herramienta que usa también queda escrita en `~/.cache/jarvis/jarvis.log` (líneas `🔧 generar_imagen(...) -> ...`). La salida más estable: `HF_TOKEN=hf_...` (gratis en huggingface.co/settings/tokens) en `~/.config/jarvis/env`.
 - **`Fatal Python error: none_dealloc`**: PySide6 6.12 con Python 3.10. Ya está fijado en `requirements.txt` (`<6.12`); si lo actualizaste: `./iniciar.sh --reinstalar`.
 - **Graba siempre 15 s**: sube `SILENCE_THRESHOLD` en `config.py` (0.015 → 0.03). **No se activa**: baja `WAKEWORD_THRESHOLD`; **se activa sola**: súbelo.
 - **Avatar no aparece / error `xcb`**: `sudo apt install libxcb-cursor0`. En Wayland, `ver_ventanas`/`ver_pantalla` solo van bien en una sesión Xorg.

@@ -12,20 +12,23 @@ que cambia de color y "respira" según lo que hace:
 import html
 import math
 import os
+import shutil
 import sys
+from string import Template
 
 # En sesiones Wayland, Qt nativo ignora "siempre encima" y la posición; XWayland sí las respeta.
 if sys.platform.startswith("linux") and os.environ.get("XDG_SESSION_TYPE") == "wayland":
     os.environ.setdefault("QT_QPA_PLATFORM", "xcb")
 
-from PySide6.QtCore import QObject, QPoint, QPointF, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import (QColor, QFont, QKeySequence, QMovie, QPainter, QPainterPath, QPen, QPixmap, QPolygonF,
+from PySide6.QtCore import QObject, QPoint, QPointF, QRectF, Qt, QTimer, QUrl, Signal
+from PySide6.QtGui import (QColor, QFont, QImageReader, QKeySequence, QMovie, QPainter, QPainterPath, QPen, QPixmap, QPolygonF,
                            QRadialGradient, QShortcut)
-from PySide6.QtWidgets import (QApplication, QCheckBox, QDialog, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
-                               QListWidget, QListWidgetItem, QMenu, QMessageBox, QPushButton, QTextBrowser, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QApplication, QCheckBox, QDialog, QFrame, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
+                               QFileDialog, QListWidget, QListWidgetItem, QMenu, QMessageBox, QPushButton, QTextBrowser, QVBoxLayout, QWidget)
 
 import ajustes
 import config
+import rutas
 
 try:
     import memoria
@@ -38,6 +41,13 @@ COLORES = {
     "pensando": QColor("#fbbf24"),
     "hablando": QColor("#f472b6"),
 }
+
+
+EXT_IMAGEN = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp")
+
+
+def _es_imagen(ruta: str) -> bool:
+    return os.path.splitext(ruta)[1].lower() in EXT_IMAGEN
 
 
 class Puente(QObject):
@@ -87,32 +97,58 @@ class Burbuja(QWidget):
         self.temporizador.start(int(segundos * 1000))
 
 
-ESTILO_CHAT = """
-QWidget { background: #0b1222; color: #eaf6ff; font-size: 13px; }
-QTextBrowser { background: #101a30; border: 1px solid #25406b; border-radius: 10px; padding: 8px; }
-QLineEdit { background: #101a30; border: 1px solid #5ee7ff; border-radius: 10px; padding: 8px 10px; }
-QListWidget { background: #101a30; border: 1px solid #25406b; border-radius: 10px; padding: 4px; }
-QListWidget::item { padding: 6px 4px; border-bottom: 1px solid #16294d; }
-QListWidget::item:selected { background: #1d3a66; color: #ffffff; }
-QPushButton { background: #5ee7ff; color: #06182e; border: none; border-radius: 10px;
+_PLANTILLA_CHAT = Template("""
+QWidget { background: $fondo; color: $texto; font-size: 13px; }
+QTextBrowser { background: $panel; border: 1px solid $borde; border-radius: 10px; padding: 8px; }
+QLineEdit { background: $panel; border: 1px solid $acento; border-radius: 10px; padding: 8px 10px; }
+QListWidget { background: $panel; border: 1px solid $borde; border-radius: 10px; padding: 4px; }
+QListWidget::item { padding: 6px 4px; border-bottom: 1px solid $suave; }
+QListWidget::item:selected { background: $suave_h; color: $sel_t; }
+QPushButton { background: $acento; color: $sobre_acento; border: none; border-radius: 10px;
               padding: 8px 16px; font-weight: bold; }
-QPushButton:hover { background: #8ff0ff; }
-QPushButton#suave { background: #16294d; color: #cfe6ff; font-weight: normal; padding: 6px 12px; }
-QPushButton#suave:hover { background: #1d3a66; }
-QPushButton#peligro { background: #3a1f2b; color: #ff9fb0; border: 1px solid #ff6b81; font-weight: normal; padding: 6px 10px; }
-QPushButton#peligro:hover { background: #4d2736; }
-QPushButton#peligro:disabled { background: #141c2e; color: #4b5b78; border: 1px solid #25406b; }
-QPushButton#voz { background: #4ade80; color: #04210f; padding: 6px 12px; }
-QPushButton#voz:hover { background: #7cf0a6; }
-QPushButton#voz:!checked { background: #3a1f2b; color: #ff9fb0; border: 1px solid #ff6b81; }
-QPushButton#voz:!checked:hover { background: #4d2736; }
-QCheckBox { color: #8aa4c8; }
-QCheckBox::indicator { width: 16px; height: 16px; border: 1px solid #5ee7ff; border-radius: 4px; background: #101a30; }
-QCheckBox::indicator:checked { background: #5ee7ff; }
-QLabel#titulo { font-size: 17px; font-weight: bold; color: #eaf6ff; }
-QLabel#estado { color: #8aa4c8; }
-QLabel#pensando { color: #fbbf24; }
-"""
+QPushButton:hover { background: $acento_h; }
+QPushButton#suave { background: $suave; color: $suave_t; font-weight: normal; padding: 6px 12px; }
+QPushButton#suave:hover { background: $suave_h; }
+QPushButton#peligro { background: $pel_bg; color: $pel_t; border: 1px solid $pel_b; font-weight: normal; padding: 6px 10px; }
+QPushButton#peligro:hover { background: $pel_h; }
+QPushButton#peligro:disabled { background: $dis_bg; color: $dis_t; border: 1px solid $borde; }
+QPushButton#voz { background: $voz; color: $voz_t; padding: 6px 12px; }
+QPushButton#voz:hover { background: $voz_h; }
+QPushButton#voz:!checked { background: $pel_bg; color: $pel_t; border: 1px solid $pel_b; }
+QPushButton#voz:!checked:hover { background: $pel_h; }
+QCheckBox { color: $tenue; }
+QCheckBox::indicator { width: 16px; height: 16px; border: 1px solid $acento; border-radius: 4px; background: $panel; }
+QCheckBox::indicator:checked { background: $acento; }
+QLabel#titulo { font-size: 17px; font-weight: bold; color: $texto; }
+QLabel#estado { color: $tenue; }
+QLabel#pensando { color: $pensando; }
+QFrame#adjunto { background: $panel; border: 1px solid $borde; border-radius: 10px; }
+QFrame#adjunto QLabel { background: transparent; }
+QPushButton#quitar { background: $suave; color: $suave_t; border: none; border-radius: 11px; padding: 0; font-weight: bold;
+                     min-width: 22px; max-width: 22px; min-height: 22px; max-height: 22px; }
+QPushButton#quitar:hover { background: $pel_bg; color: $pel_t; }
+""")
+
+# Dos paletas: el chat se puede pasar de modo oscuro a claro con el botón «Modo claro / Modo oscuro» (se recuerda en ajustes.json).
+PALETAS = {
+    "oscuro": dict(fondo="#0b1222", texto="#eaf6ff", panel="#101a30", borde="#25406b", acento="#5ee7ff",
+                   acento_h="#8ff0ff", sobre_acento="#06182e", suave="#16294d", suave_h="#1d3a66", suave_t="#cfe6ff",
+                   sel_t="#ffffff", pel_bg="#3a1f2b", pel_t="#ff9fb0", pel_b="#ff6b81", pel_h="#4d2736",
+                   dis_bg="#141c2e", dis_t="#4b5b78", voz="#4ade80", voz_t="#04210f", voz_h="#7cf0a6",
+                   tenue="#8aa4c8", hora="#5c7396", pensando="#fbbf24"),
+    "claro": dict(fondo="#f5f7fa", texto="#1b2535", panel="#ffffff", borde="#c8d2e0", acento="#1d78c2",
+                  acento_h="#3a8fd6", sobre_acento="#ffffff", suave="#e4ebf4", suave_h="#d3deec", suave_t="#1b2535",
+                  sel_t="#0f2a44", pel_bg="#fde8eb", pel_t="#b3263a", pel_b="#e07a88", pel_h="#fbd5db",
+                  dis_bg="#eceff4", dis_t="#9aa6b8", voz="#2f9e5b", voz_t="#ffffff", voz_h="#3fb56d",
+                  tenue="#5d6b80", hora="#8a97aa", pensando="#b7791f"),
+}
+
+
+def estilo_chat(tema: str) -> str:
+    return _PLANTILLA_CHAT.substitute(PALETAS.get(tema, PALETAS["oscuro"]))
+
+
+ESTILO_CHAT = estilo_chat("oscuro")
 
 TEXTO_ESTADO = {"reposo": "En reposo", "escuchando": "Te escucho…", "pensando": "Pensando…", "hablando": "Hablando…"}
 
@@ -207,7 +243,7 @@ class DialogoHistorial(QDialog):
     def __init__(self, padre, prompts):
         super().__init__(padre)
         self.resize(560, 580)
-        self.setStyleSheet(ESTILO_CHAT)
+        self.setStyleSheet(estilo_chat(ajustes.tema()))
         self.todos = list(reversed(prompts))        # [(uid, fecha, texto)], el más nuevo arriba
         self.visibles: list[str] = []               # uids que coinciden con la búsqueda actual
         self.elegido = None
@@ -334,7 +370,11 @@ class Chat(QWidget):
         self.nombre = ajustes.obtener_nombre()
         self.setWindowTitle(f"Chat con {self.nombre}")
         self.resize(460, 620)
-        self.setStyleSheet(ESTILO_CHAT)
+        self.tema = ajustes.tema()                  # 'oscuro' | 'claro'
+        self._entradas = []                         # lo que hay en pantalla: (quien, texto, fecha); sirve para repintar al cambiar de tema
+        self._estado_actual = "reposo"
+        self._adjuntos = []                         # archivos adjuntos que aún no se envían (se ven como vista previa)
+        self.setStyleSheet(estilo_chat(self.tema))
 
         # cabecera: la peliroja animada + estado + botones
         self.mini = MiniAvatar(avatar)
@@ -349,14 +389,26 @@ class Chat(QWidget):
         self.btn_hist = QPushButton("📜 Historial")
         self.btn_hist.setObjectName("suave")
         self.btn_hist.setCursor(Qt.PointingHandCursor)
+        self.btn_limpiar = QPushButton("🧹 Limpiar pantalla")
+        self.btn_limpiar.setObjectName("suave")
+        self.btn_limpiar.setToolTip("Oculta los mensajes anteriores. No borra tu historial («📜 Historial» sigue teniéndolo todo).")
+        self.btn_limpiar.setCursor(Qt.PointingHandCursor)
+        self.btn_tema = QPushButton()
+        self.btn_tema.setObjectName("suave")
+        self.btn_tema.setCursor(Qt.PointingHandCursor)
         botones = QHBoxLayout()
         botones.addWidget(self.btn_voz)
         botones.addWidget(self.btn_hist)
         botones.addStretch(1)
+        botones2 = QHBoxLayout()
+        botones2.addWidget(self.btn_limpiar)
+        botones2.addWidget(self.btn_tema)
+        botones2.addStretch(1)
         textos = QVBoxLayout()
         textos.addWidget(self.titulo)
         textos.addWidget(self.estado_txt)
         textos.addLayout(botones)
+        textos.addLayout(botones2)
         cabecera = QHBoxLayout()
         cabecera.addWidget(self.mini)
         cabecera.addLayout(textos, 1)
@@ -365,15 +417,26 @@ class Chat(QWidget):
         self.historial.setOpenExternalLinks(True)
         self.entrada = CampoPrompt()
         self.boton = QPushButton("Enviar")
+        self.btn_adj = QPushButton("📎")
+        self.btn_adj.setObjectName("suave")
+        self.btn_adj.setToolTip("Adjuntar un archivo para que lo lea, edite o convierta")
+        self.btn_adj.setCursor(Qt.PointingHandCursor)
         self.leer = QCheckBox("Leer en voz alta las respuestas a lo que escribo")
         self.leer.setChecked(ajustes.leer_respuestas())
 
         fila = QHBoxLayout()
+        fila.addWidget(self.btn_adj)
         fila.addWidget(self.entrada, 1)
         fila.addWidget(self.boton)
         caja = QVBoxLayout(self)
         caja.addLayout(cabecera)
         caja.addWidget(self.historial, 1)
+        self.zona_adj = QWidget()                   # vista previa de lo adjuntado: SEPARADA de la caja donde escribes
+        self.caja_adj = QVBoxLayout(self.zona_adj)
+        self.caja_adj.setContentsMargins(0, 0, 0, 0)
+        self.caja_adj.setSpacing(4)
+        self.zona_adj.hide()
+        caja.addWidget(self.zona_adj)
         caja.addLayout(fila)
         caja.addWidget(self.leer)
 
@@ -381,12 +444,16 @@ class Chat(QWidget):
         self.boton.clicked.connect(self.enviar)
         self.btn_voz.toggled.connect(self._cambiar_voz)
         self.btn_hist.clicked.connect(self.abrir_historial)
+        self.btn_limpiar.clicked.connect(self.limpiar_pantalla)
+        self.btn_tema.clicked.connect(self.alternar_tema)
+        self.btn_adj.clicked.connect(self.adjuntar)
         self.leer.toggled.connect(ajustes.guardar_leer_respuestas)
         puente.mensaje.connect(self.agregar_externo)
         puente.estado.connect(self._estado)
         puente.nombre.connect(self._nombre)
         puente.voz_modo.connect(self.aplicar_voz)
 
+        self._texto_boton_tema()
         self.aplicar_voz(ajustes.voz_activa())
         self._cargar_conversacion_previa()
 
@@ -408,21 +475,50 @@ class Chat(QWidget):
             self.btn_voz.setToolTip("El micrófono está apagado: solo recibe lo que escribes. Clic para activar la voz.")
             self.entrada.setPlaceholderText("Escribe aquí y pulsa Enter…")
 
+    # ------------------------------------------------------------ tema claro / oscuro y limpiar pantalla
+    def _texto_boton_tema(self):
+        if self.tema == "oscuro":
+            self.btn_tema.setText("☀️ Modo claro")
+            self.btn_tema.setToolTip("Cambiar al tema claro")
+        else:
+            self.btn_tema.setText("🌙 Modo oscuro")
+            self.btn_tema.setToolTip("Cambiar al tema oscuro")
+
+    def alternar_tema(self):
+        self.tema = "claro" if self.tema == "oscuro" else "oscuro"
+        ajustes.guardar_tema(self.tema)
+        self.setStyleSheet(estilo_chat(self.tema))
+        self._texto_boton_tema()
+        self._estado(self._estado_actual)               # el color de «Pensando…» también cambia
+        self.historial.clear()                          # se repinta lo que había, con los colores del tema nuevo
+        for quien, texto, fecha, adj in self._entradas:
+            self._pintar(quien, texto, fecha, adj)
+
+    def limpiar_pantalla(self):
+        """Deja la pantalla en blanco. NO borra nada: el historial y la memoria siguen intactos, y al reabrir el chat
+        tampoco vuelven a aparecer los mensajes anteriores (se guarda desde cuándo mostrar)."""
+        self._entradas.clear()
+        self.historial.clear()
+        try:
+            ajustes.guardar_chat_desde(memoria._ahora())
+        except Exception as e:
+            print(f"⚠️  No pude recordar que limpiaste la pantalla: {e}")
+        self._agregar("sep", "pantalla limpiada · tu historial sigue guardado en «📜 Historial»")
+
     # ------------------------------------------------------------ historial (todo lo que has pedido)
     def _cargar_conversacion_previa(self):
         try:
-            previos = memoria.mensajes_para_chat(120)
+            previos = memoria.mensajes_para_chat(120, ajustes.chat_desde())
             prompts = [t for _, t in memoria.todos_los_prompts(2000)]
         except Exception as e:
             print(f"⚠️  No pude cargar el historial: {e}")
             return
         self.entrada.cargar(prompts)
         if previos:
-            self.historial.append(f"<p style='color:#8aa4c8'><i>— conversación anterior ({len(previos)} mensajes; "
-                                  f"«📜 Historial» muestra todo lo que has pedido) —</i></p>")
+            self._agregar("sep", f"— conversación anterior ({len(previos)} mensajes; «📜 Historial» muestra todo lo que has pedido) —")
             for fecha, quien, texto in previos:
                 self._agregar(quien, texto, fecha)
-            self.historial.append("<p style='color:#8aa4c8'><i>— ahora —</i></p>")
+            self._agregar("sep", "— ahora —")
 
     def abrir_historial(self):
         try:
@@ -440,19 +536,32 @@ class Chat(QWidget):
             self.entrada.setFocus()
 
     def refrescar_conversacion(self):
+        self._entradas.clear()
         self.historial.clear()
         self._cargar_conversacion_previa()
 
     # ------------------------------------------------------------ mensajes
-    def _agregar(self, quien: str, texto: str, fecha: str = ""):
+    def _agregar(self, quien: str, texto: str, fecha: str = "", adjuntos=()):
+        self._entradas.append((quien, texto, fecha, list(adjuntos)))
+        self._pintar(quien, texto, fecha, adjuntos)
+
+    def _pintar(self, quien: str, texto: str, fecha: str = "", adjuntos=()):
+        c = PALETAS[self.tema]
         seguro = html.escape(texto).replace("\n", "<br>")
-        hora = f" <span style='color:#5c7396;font-size:11px'>{html.escape(fecha)}</span>" if fecha else ""
+        hora = f" <span style='color:{c['hora']};font-size:11px'>{html.escape(fecha)}</span>" if fecha else ""
         if quien == "tu":
-            bloque = f"<p><b style='color:#8aa4c8'>Tú</b>{hora}<br>{seguro}</p>"
+            extra = ""
+            for ruta in adjuntos:                       # lo que adjuntaste se ve en el chat (la imagen, en miniatura)
+                if _es_imagen(ruta):
+                    ancho = min(220, QImageReader(ruta).size().width() or 220)
+                    extra += f"<br><img src='{html.escape(QUrl.fromLocalFile(ruta).toString())}' width='{ancho}'>"
+                else:
+                    extra += f"<br>📎 {html.escape(os.path.basename(ruta))}"
+            bloque = f"<p><b style='color:{c['tenue']}'>Tú</b>{hora}<br>{seguro}{extra}</p>"
         elif quien == "ella":
-            bloque = f"<p><b style='color:#5ee7ff'>{html.escape(self.nombre)}</b>{hora}<br>{seguro}</p>"
-        else:
-            bloque = f"<p style='color:#8aa4c8'><i>{seguro}</i></p>"
+            bloque = f"<p><b style='color:{c['acento']}'>{html.escape(self.nombre)}</b>{hora}<br>{seguro}</p>"
+        else:                                          # 'aviso' y 'sep' (separadores)
+            bloque = f"<p style='color:{c['tenue']}'><i>{seguro}</i></p>"
         self.historial.append(bloque)
         self.historial.verticalScrollBar().setValue(self.historial.verticalScrollBar().maximum())
 
@@ -462,18 +571,91 @@ class Chat(QWidget):
             if quien == "tu":                         # lo que dices por voz también se recuerda con ↑
                 self.entrada.recordar(texto.strip())
 
+    def adjuntar(self):
+        """📎: elige uno o más archivos. Si ya están en una carpeta que ella puede usar (Escritorio, Documentos...) se usa
+        esa ruta; si no, se COPIA a ~/JarvisArchivos (el original no se toca). Queda como vista previa (la imagen se ve)
+        encima de la caja; escribes la orden («resúmelo», «cámbiale el título»...) y al enviar va junto con el archivo."""
+        elegidos, _ = QFileDialog.getOpenFileNames(self, "Elegir archivo(s)", os.path.expanduser("~"))
+        usados = []
+        for origen in elegidos:
+            try:
+                if rutas.resolver_ruta(origen):
+                    usados.append(origen)
+                    continue
+                os.makedirs(config.OUTPUT_DIR, exist_ok=True)
+                base, ext = os.path.splitext(os.path.basename(origen))
+                destino, i = os.path.join(config.OUTPUT_DIR, base + ext), 2
+                while os.path.exists(destino):
+                    destino = os.path.join(config.OUTPUT_DIR, f"{base} ({i}){ext}")
+                    i += 1
+                shutil.copy2(origen, destino)
+                usados.append(destino)
+                self._agregar("aviso", f"📎 Copié «{os.path.basename(origen)}» a {config.OUTPUT_DIR} para poder trabajarlo.")
+            except OSError as e:
+                self._agregar("aviso", f"No pude adjuntar «{os.path.basename(origen)}»: {e}")
+        nuevos = [u for u in usados if u not in self._adjuntos]
+        if nuevos:
+            self._adjuntos += nuevos
+            self._repintar_adjuntos()
+            self.entrada.setFocus()
+
+    def _repintar_adjuntos(self):
+        while self.caja_adj.count():
+            it = self.caja_adj.takeAt(0)
+            if it.widget():
+                it.widget().deleteLater()
+        for ruta in self._adjuntos:
+            marco = QFrame()
+            marco.setObjectName("adjunto")
+            fila = QHBoxLayout(marco)
+            fila.setContentsMargins(6, 6, 6, 6)
+            mini = QLabel()
+            mini.setFixedSize(56, 56)
+            mini.setAlignment(Qt.AlignCenter)
+            pm = QPixmap(ruta) if _es_imagen(ruta) else QPixmap()
+            if not pm.isNull():
+                mini.setPixmap(pm.scaled(56, 56, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            else:
+                mini.setText("📄")
+                mini.setStyleSheet("font-size: 28px;")
+            nombre = QLabel()
+            nombre.setToolTip(ruta)
+            nombre.setText(nombre.fontMetrics().elidedText(os.path.basename(ruta), Qt.ElideMiddle, 280))
+            quitar = QPushButton("✕")
+            quitar.setObjectName("quitar")
+            quitar.setToolTip("Quitar adjunto")
+            quitar.setCursor(Qt.PointingHandCursor)
+            quitar.clicked.connect(lambda _=False, r=ruta: self.quitar_adjunto(r))
+            fila.addWidget(mini)
+            fila.addWidget(nombre, 1)
+            fila.addWidget(quitar)
+            self.caja_adj.addWidget(marco)
+        self.zona_adj.setVisible(bool(self._adjuntos))
+
+    def quitar_adjunto(self, ruta: str):
+        if ruta in self._adjuntos:
+            self._adjuntos.remove(ruta)
+        self._repintar_adjuntos()
+
     def enviar(self):
         texto = self.entrada.text().strip()
-        if not texto:
+        adj = list(self._adjuntos)
+        if not texto and not adj:
             return
-        self._agregar("tu", texto)
+        if not texto:                                   # solo adjuntó algo: una orden por defecto
+            texto = "Describe y analiza esta imagen." if all(_es_imagen(a) for a in adj) else "Léelo y dime de qué trata."
+        nota = ("Archivo adjunto: " + "; ".join(f'"{a}"' for a in adj) + ". ") if adj else ""
+        self._agregar("tu", texto, "", adj)
         self.entrada.recordar(texto)
         self.entrada.clear()
-        self.puente.texto_escrito.emit(texto, self.leer.isChecked())
+        self._adjuntos.clear()
+        self._repintar_adjuntos()
+        self.puente.texto_escrito.emit(nota + texto, self.leer.isChecked())
 
     def _estado(self, estado: str):
+        self._estado_actual = estado
         self.estado_txt.setText(TEXTO_ESTADO.get(estado, ""))
-        self.estado_txt.setStyleSheet("color: #fbbf24;" if estado == "pensando" else "")
+        self.estado_txt.setStyleSheet(f"color: {PALETAS[self.tema]['pensando']};" if estado == "pensando" else "")
 
     def _nombre(self, nombre: str):
         self.nombre = nombre

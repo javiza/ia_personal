@@ -91,3 +91,29 @@ def guardar_posicion(x: int, y: int):
         datos = _leer()
         datos["posicion"] = [int(x), int(y)]
         _escribir(datos)
+
+
+def tema() -> str:
+    """Tema de la interfaz de escritorio: 'oscuro' (por defecto) o 'claro'."""
+    t = _leer().get("tema", "oscuro")
+    return t if t in ("claro", "oscuro") else "oscuro"
+
+
+def guardar_tema(valor: str):
+    with _lock:
+        datos = _leer()
+        datos["tema"] = "claro" if valor == "claro" else "oscuro"
+        _escribir(datos)
+
+
+def chat_desde() -> str:
+    """Marca de tiempo (ISO) desde la que se muestra la conversación en pantalla. Vacía = se muestra todo.
+    Se guarda al pulsar «Limpiar pantalla»; el historial completo NO se borra."""
+    return str(_leer().get("chat_desde", "") or "")
+
+
+def guardar_chat_desde(marca: str):
+    with _lock:
+        datos = _leer()
+        datos["chat_desde"] = marca or ""
+        _escribir(datos)

@@ -1,4 +1,3 @@
-cat > .gitignore <<'EOF'
 .venv/
 venv/
 __pycache__/
@@ -7,4 +6,6 @@ memoria.sqlite3*
 ajustes.json
 .env
 .requisitos.sha
-EOF*.zip
+*.zip
+
+espacio/

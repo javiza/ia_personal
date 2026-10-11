@@ -87,8 +87,11 @@ def _b64_o_url(item: dict) -> bytes:
 # =================================================== generar imagen (proveedores)
 def _img_pollinations(prompt, ancho, alto):
     url = f"{config.POLLINATIONS_URL}/{urllib.parse.quote(prompt)}"
+    cabeceras = {"User-Agent": "Jarvis/1.0"}
+    if os.environ.get("POLLINATIONS_KEY"):               # algunas cuentas/endpoints nuevos piden clave
+        cabeceras["Authorization"] = "Bearer " + os.environ["POLLINATIONS_KEY"]
     try:
-        r = requests.get(url, params={"width": ancho, "height": alto, "model": config.POLLINATIONS_MODEL,
+        r = requests.get(url, headers=cabeceras, params={"width": ancho, "height": alto, "model": config.POLLINATIONS_MODEL,
                                       "nologo": "true", "private": "true", "seed": int(time.time()) % 100000},
                          timeout=config.IMAGEN_TIMEOUT)
     except requests.exceptions.Timeout:

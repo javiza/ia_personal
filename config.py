@@ -84,7 +84,7 @@ WHISPER_VAD_FILTER = True
 #   "groq"      -> nube gratis con límites; sus modelos traen filtros de seguridad propios.
 #   "anthropic" -> Claude (de pago, por uso); también trae sus propias normas.
 # Si quieres que NUNCA use una nube con filtros: ORDEN_CEREBROS = ["ollama"]
-ORDEN_CEREBROS = ["ollama", "groq"]
+ORDEN_CEREBROS = ["groq", "ollama"]     # groq primero (rápido); Ollama queda de respaldo si Groq se queda sin cupo
 if os.environ.get("JARVIS_CEREBROS"):          # p. ej. en Render:  JARVIS_CEREBROS=groq,anthropic
     ORDEN_CEREBROS = [x.strip() for x in os.environ["JARVIS_CEREBROS"].split(",") if x.strip()]
 
@@ -100,6 +100,10 @@ OLLAMA_TIMEOUT_PRIMER_TOKEN = 45           # s máx. hasta que Ollama empieza a 
 OLLAMA_TIMEOUT_TOTAL = 90                  # s máx. por CADA vuelta del modelo en Ollama; si no, pasa a la nube
 OLLAMA_TIMEOUT_TAREA = 420                 # s máx. para una tarea completa de varios pasos (revisar un proyecto, etc.)
 OLLAMA_PAUSA_TRAS_LENTITUD = 600           # s que NO se vuelve a intentar con Ollama tras ser demasiado lento (evita esperar en cada pregunta)
+if ORDEN_CEREBROS == ["ollama"]:           # sin nube de respaldo no hay a dónde saltar: se le da tiempo (CPU sin GPU es lento)
+    OLLAMA_TIMEOUT_PRIMER_TOKEN = 240
+    OLLAMA_TIMEOUT_TOTAL = 360
+    OLLAMA_TIMEOUT_TAREA = 900
 OLLAMA_MAX_TOKENS_RESPUESTA = 400          # las respuestas son de 1-4 frases; así no divaga
 OLLAMA_TEMPERATURA = 0.3
 OLLAMA_REPEAT_PENALTY = 1.15               # evita el bucle de «… … …» que salía a veces
@@ -187,6 +191,26 @@ ALIAS_CARPETAS = {
 ALLOWED_DIRS = [OUTPUT_DIR] + list(dict.fromkeys(DIRS_USUARIO.values()))
 CARPETA_RESPALDOS = os.path.join(OUTPUT_DIR, ".respaldos")  # copia automática antes de sobrescribir
 
+# --- Espacio de archivos de la versión web/celular ---
+# Es la única carpeta que la asistente puede tocar desde el celular: lo que subes (📎) y lo que ella crea/edita.
+# En Render el disco gratis se borra en cada reinicio/deploy: descarga lo importante, o monta un Disk
+# (plan pagado) y pon JARVIS_ESPACIO=/var/data/espacio.
+WEB_ESPACIO = os.environ.get("JARVIS_ESPACIO", os.path.join(BASE_DIR, "espacio"))
+WEB_MAX_ARCHIVO = 15 * 1024 * 1024          # bytes por archivo subido
+WEB_MAX_TOTAL = 150 * 1024 * 1024           # bytes en todo el espacio
+WEB_MAX_ARCHIVOS = 300
+WEB_EXT_PERMITIDAS = {                      # solo formatos que ella sabe leer/editar; nada ejecutable ni .svg/.html servibles
+    ".txt", ".md", ".csv", ".tsv", ".json", ".xml", ".yml", ".yaml", ".log", ".ini", ".cfg", ".conf", ".toml", ".env",
+    ".py", ".js", ".ts", ".java", ".c", ".cpp", ".h", ".cs", ".go", ".rs", ".php", ".rb", ".sh", ".sql", ".html", ".css",
+    ".docx", ".xlsx", ".xlsm", ".pdf", ".zip", ".png", ".jpg", ".jpeg", ".gif", ".webp",
+}
+if MODO_WEB:                                # el servidor solo ve su espacio: ni Escritorio ni Documentos
+    OUTPUT_DIR = WEB_ESPACIO
+    DIRS_USUARIO = {}
+    ALIAS_CARPETAS = {}
+    ALLOWED_DIRS = [WEB_ESPACIO]
+    CARPETA_RESPALDOS = os.path.join(WEB_ESPACIO, ".respaldos")
+
 # Permiso para que pueda MIRAR tu pantalla (captura) cuando se lo pidas. La lista de
 # ventanas abiertas (solo títulos) no depende de esto. La captura se envía al modelo
 # de IA que uses (Groq/Claude), por eso se puede apagar aquí.
@@ -230,7 +254,7 @@ NUBE_TIMEOUT = 8                           # s máx. para conectarse a la nube
 # Claves en ~/.config/jarvis/env  (OPENAI_API_KEY=...  HF_TOKEN=...  REPLICATE_API_TOKEN=...)
 IMAGEN_PROVEEDORES = ["pollinations", "openai", "huggingface", "local_sd"]
 IMAGEN_TIMEOUT = 120
-POLLINATIONS_URL = "https://image.pollinations.ai/prompt"
+POLLINATIONS_URL = os.environ.get("POLLINATIONS_URL", "https://image.pollinations.ai/prompt")   # si cambian la dirección, ponla en env
 POLLINATIONS_MODEL = "flux"
 OPENAI_URL = "https://api.openai.com/v1"
 OPENAI_IMAGE_MODEL = "gpt-image-1"

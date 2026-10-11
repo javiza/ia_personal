@@ -111,6 +111,7 @@ def _ejecutar(nombre, args, bitacora):
     """Ejecuta una herramienta y la anota, por si hay que seguir con otro cerebro sin repetirla."""
     resultado = tools.ejecutar_tool(nombre, args)
     bitacora.append(f"{nombre}({json.dumps(args, ensure_ascii=False)[:150]}) -> {resultado[:250]}")
+    print(f"🔧 {nombre}({json.dumps(args, ensure_ascii=False)[:120]}) -> {resultado[:300]}")   # queda en ~/.cache/jarvis/jarvis.log
     return resultado
 
 
@@ -128,6 +129,11 @@ def _ollama_en_pausa() -> bool:
 
 def _pausar_ollama():
     global _ollama_pausa_hasta
+    if not any(b != "ollama" for b in config.ORDEN_CEREBROS):
+        # Ollama es el ÚNICO cerebro: saltarlo dejaría al asistente mudo 10 min. Se sigue intentando con él.
+        print("⏳ Ollama fue lento y no hay otro cerebro de respaldo: sigo intentando con él en la próxima pregunta "
+              "(usa un modelo más chico, GPU, o sube OLLAMA_TIMEOUT_PRIMER_TOKEN en config.py).")
+        return
     _ollama_pausa_hasta = time.time() + config.OLLAMA_PAUSA_TRAS_LENTITUD
     print(f"⏸️  Ollama fue muy lento: lo salto {config.OLLAMA_PAUSA_TRAS_LENTITUD // 60} min "
           f"(usa un modelo más chico o GPU, o pon 'groq' primero en ORDEN_CEREBROS).")
@@ -317,6 +323,50 @@ def _preguntar_anthropic(historial, modelo, bitacora):
 
 
 # ------------------------------------------------------------------ cadena de respaldo
+_groq_cache = None            # (instante, {ids}) de los modelos que Groq ofrece hoy
+_groq_avisados = set()
+
+
+def _groq_disponibles():
+    """
+    Modelos que Groq realmente ofrece AHORA (GET /models), recordados 1 hora. Groq retira modelos seguido
+    (llama-3.3-70b-versatile y llama-3.1-8b-instant daban error 404 en cada pregunta). None = no se pudo consultar.
+    """
+    global _groq_cache
+    ahora = time.time()
+    if _groq_cache and ahora - _groq_cache[0] < 3600:
+        return _groq_cache[1]
+    clave = os.environ.get("GROQ_API_KEY")
+    if not clave:
+        return None
+    try:
+        r = requests.get("https://api.groq.com/openai/v1/models", headers={"Authorization": f"Bearer {clave}"}, timeout=6)
+        if r.status_code != 200:
+            return None
+        ids = {m["id"] for m in r.json().get("data", []) if m.get("id")}
+    except Exception:
+        return None
+    if not ids:
+        return None
+    _groq_cache = (ahora, ids)
+    return ids
+
+
+def _modelos_groq():
+    """GROQ_MODELOS sin los que Groq ya no tiene (se avisa una sola vez con qué otros hay)."""
+    disp = _groq_disponibles()
+    if disp is None:
+        return list(config.GROQ_MODELOS)
+    buenos = [m for m in config.GROQ_MODELOS if m in disp]
+    quitados = [m for m in config.GROQ_MODELOS if m not in disp]
+    if quitados and not set(quitados) <= _groq_avisados:
+        _groq_avisados.update(quitados)
+        chat = sorted(m for m in disp if not re.search(r"whisper|tts|guard|orpheus|embed|distil-whisper", m, re.I))
+        print(f"⚠️  Groq ya no ofrece: {', '.join(quitados)}. Los salto. Hoy hay: {', '.join(chat)}. "
+              f"Cámbialos en GROQ_MODELOS (config.py).")
+    return buenos or list(config.GROQ_MODELOS)
+
+
 def _cadena():
     """Lista de (backend, modelo) en el orden en que se probarán."""
     cadena = []
@@ -324,7 +374,7 @@ def _cadena():
         if backend == "ollama":
             cadena.append(("ollama", config.OLLAMA_MODEL))
         elif backend == "groq":
-            cadena += [("groq", m) for m in config.GROQ_MODELOS]
+            cadena += [("groq", m) for m in _modelos_groq()]
         elif backend == "anthropic":
             cadena.append(("anthropic", config.ANTHROPIC_MODEL))
     return cadena

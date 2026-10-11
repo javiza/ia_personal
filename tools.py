@@ -253,7 +253,7 @@ def obtener_clima(ciudad: str) -> str:
 def _ubicar(nombre, carpeta=""):
     """Une 'carpeta' + 'nombre' (si el nombre no trae ya una ruta propia)."""
     nombre = (nombre or "").strip()
-    carpeta = (carpeta or "").strip()
+    carpeta = "" if config.MODO_WEB else (carpeta or "").strip()   # en la web todo va al espacio de archivos
     primero = nombre.replace("\\", "/").split("/")[0].lower()
     if primero in config.ALIAS_CARPETAS:        # el nombre ya trae «Escritorio/...»: no duplicar
         return nombre
@@ -262,11 +262,21 @@ def _ubicar(nombre, carpeta=""):
     return nombre
 
 
+def _mostrar(destino):
+    """En la web no se muestran rutas del servidor: solo el nombre dentro del espacio de archivos."""
+    if config.MODO_WEB:
+        try:
+            return os.path.relpath(destino, os.path.realpath(config.WEB_ESPACIO)).replace(os.sep, "/")
+        except ValueError:
+            pass
+    return destino
+
+
 def _verificado(destino):
     """Comprueba en el disco que el archivo EXISTE de verdad. Devuelve (ok, frase)."""
     if os.path.isfile(destino):
-        return True, f"{destino} (verificado en disco, {os.path.getsize(destino)} bytes)"
-    return False, f"NO se creó nada en {destino}"
+        return True, f"{_mostrar(destino)} (verificado en disco, {os.path.getsize(destino)} bytes)"
+    return False, f"NO se creó nada en {_mostrar(destino)}"
 
 
 def listar_archivos(carpeta: str = "") -> str:
@@ -542,7 +552,7 @@ def reemplazar_en_archivo(ruta: str, buscar: str, reemplazar: str) -> str:
             respaldo = rutas.respaldar(destino)
             with open(destino, "w", encoding="utf-8") as f:
                 f.write(texto.replace(buscar, reemplazar))
-        return f"Listo: reemplacé {n} aparición(es) en {destino} (respaldo: {respaldo})."
+        return f"Listo: reemplacé {n} aparición(es) en {_mostrar(destino)}" + ("" if config.MODO_WEB else f" (respaldo: {respaldo})") + "."
     except UnicodeDecodeError:
         return "Ese archivo no es de texto, no puedo editarlo así."
     except Exception as e:
@@ -710,7 +720,9 @@ def generar_imagen(prompt: str, nombre_archivo: str = "", carpeta: str = "", anc
         a = max(256, min(int(ancho or 1024), 2048)); b = max(256, min(int(alto or 1024), 2048))
         prov = medios.generar_imagen(prompt.strip(), destino, a, b)
     except Exception as e:
-        return f"No pude generar la imagen: {e}"
+        return (f"No pude generar la imagen. Motivo de cada proveedor: {e}. "
+                "[Dile al usuario estos motivos tal cual, sin resumirlos ni inventar otros, y qué puede hacer: "
+                "poner HF_TOKEN (gratis en huggingface.co/settings/tokens) o OPENAI_API_KEY en ~/.config/jarvis/env.]")
     return _listo("Imagen creada", destino, f" [con {prov}]")
 
 
@@ -1002,13 +1014,17 @@ _SINONIMOS = {"lista_archivos": "listar_archivos", "crear_archivo": "escribir_ar
 
 # En la versión web/celular el servidor NO debe tocar sus propios archivos, pantalla ni ventanas.
 _WEB_PERMITIDAS = {"obtener_clima", "buscar_en_web", "leer_pagina_web", "guardar_recuerdo", "guardar_instruccion",
-                   "olvidar_recuerdo", "ver_memoria", "buscar_en_historial", "cambiar_nombre_asistente"}
+                   "olvidar_recuerdo", "ver_memoria", "buscar_en_historial", "cambiar_nombre_asistente",
+                   # archivos: SOLO dentro del espacio de la web (config.WEB_ESPACIO), por rutas.resolver_ruta
+                   "listar_archivos", "listar_arbol", "leer_zip", "buscar_en_archivos", "leer_archivo", "escribir_archivo",
+                   "reemplazar_en_archivo", "crear_documento_word", "crear_hoja_excel", "crear_pdf",
+                   "inspeccionar_imagen", "analizar_imagen", "editar_imagen"}
 
 
 def ejecutar_tool(nombre: str, args: dict) -> str:
     nombre = _SINONIMOS.get(nombre, nombre)
     if config.MODO_WEB and nombre not in _WEB_PERMITIDAS:
-        return "Esa función solo está en la versión del computador, no en la del celular."
+        return "Esa función solo está en la versión del computador (en el celular solo hay archivos del espacio de trabajo)."
     ejecutor = _EJECUTORES.get(nombre)
     if not ejecutor:
         return f"Herramienta desconocida: {nombre}"

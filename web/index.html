@@ -4,7 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Jarvis</title>
-<meta name="theme-color" content="#0b1222">
+<meta name="theme-color" content="#0e1520" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f5f7fa" media="(prefers-color-scheme: light)">
+<meta name="color-scheme" content="dark light">
 <meta name="description" content="Tu asistente personal por voz y texto">
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="icon" href="/static/img/icon-192.png">
@@ -14,16 +16,38 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Jarvis">
 <link rel="stylesheet" href="/static/estilo.css">
+<script>try { var t = localStorage.getItem("tema"); if (t === "claro" || t === "oscuro") document.documentElement.dataset.tema = t; } catch (e) {}</script>
 </head>
 <body>
+
+<!-- Iconos (trazo, heredan el color del texto) -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-clip" viewBox="0 0 24 24"><path d="M21 11.5 12.6 20a5.5 5.5 0 0 1-7.8-7.8l8.5-8.5a3.7 3.7 0 0 1 5.2 5.2l-8.5 8.5a1.9 1.9 0 0 1-2.6-2.6l7.8-7.8"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H9l2 2.5h7.5A2.5 2.5 0 0 1 21 10v7.5a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+    <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3"/></symbol>
+    <symbol id="i-mic-off" viewBox="0 0 24 24"><path d="M4 4l16 16M9 9v2a3 3 0 0 0 5 2.2M15 9.5V6a3 3 0 0 0-5.7-1.3M5.5 11.5a6.5 6.5 0 0 0 10.2 5.3M18.5 11.5c0 1-.2 1.9-.6 2.7M12 18v3"/></symbol>
+    <symbol id="i-send" viewBox="0 0 24 24"><path d="M12 19V5M5.5 11.5 12 5l6.5 6.5"/></symbol>
+    <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11M7 11l5 5 5-5M5 20h14"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 1.8h6a2 2 0 0 0 2-1.8l1-12M9 7V4.5h6V7"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2.5"/><path d="M15 9V6.5A2.5 2.5 0 0 0 12.5 4h-6A2.5 2.5 0 0 0 4 6.5v6A2.5 2.5 0 0 0 6.5 15H9"/></symbol>
+    <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3H7.5A2.5 2.5 0 0 0 5 5.5v13A2.5 2.5 0 0 0 7.5 21h9a2.5 2.5 0 0 0 2.5-2.5V8z"/><path d="M14 3v5h5"/></symbol>
+    <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6 7 7M17 17l1.4 1.4M18.4 5.6 17 7M7 17l-1.4 1.4"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z"/></symbol>
+    <symbol id="i-eraser" viewBox="0 0 24 24"><path d="M19.5 20H9L4.4 15.4a2 2 0 0 1 0-2.8l8.2-8.2a2 2 0 0 1 2.8 0l5.2 5.2a2 2 0 0 1 0 2.8L13 19.5M8.5 9.5l6 6"/></symbol>
+    <symbol id="i-install" viewBox="0 0 24 24"><rect x="6" y="2.5" width="12" height="19" rx="3"/><path d="M12 8v6M9.5 12l2.5 2.5 2.5-2.5"/></symbol>
+  </defs>
+</svg>
 
 <!-- Entrada con clave -->
 <main id="login" class="login" hidden>
   <img class="login-avatar" src="/static/img/avatar_reposo.gif" alt="">
   <h1>Jarvis</h1>
+  <p class="login-sub">Escribe tu clave para continuar.</p>
   <form id="form-login" autocomplete="on">
-    <input id="clave" type="password" name="password" autocomplete="current-password" placeholder="Clave de acceso" required>
-    <button type="submit">Entrar</button>
+    <input id="clave" type="password" name="password" autocomplete="current-password" placeholder="Clave de acceso" aria-label="Clave de acceso" required>
+    <button type="submit" class="primario">Entrar</button>
     <p id="login-error" class="error" role="alert"></p>
   </form>
 </main>
@@ -31,17 +55,19 @@
 <!-- App -->
 <div id="app" class="app" hidden>
   <header class="cabecera">
-    <button id="avatar" class="avatar" data-estado="reposo" aria-label="Hablar con ella">
+    <button id="avatar" class="avatar" data-estado="reposo" aria-label="Hablar">
       <img id="avatar-img" src="/static/img/avatar_reposo.gif" alt="">
     </button>
     <div class="cabecera-texto">
       <h1 id="nombre">Jarvis</h1>
       <p id="estado-txt" class="estado">En reposo</p>
-      <div class="botones">
-        <button id="btn-voz" class="voz" aria-pressed="true"></button>
-        <button id="btn-hist" class="suave">📜 Historial</button>
-        <button id="btn-instalar" class="suave" hidden>📲 Instalar</button>
-      </div>
+    </div>
+    <div class="herramientas">
+      <button id="btn-limpiar" class="icono" aria-label="Limpiar pantalla" title="Limpiar pantalla (no borra tu historial)"><svg class="ico"><use href="#i-eraser"/></svg></button>
+      <button id="btn-tema" class="icono" aria-label="Cambiar tema" title="Modo claro"><svg id="tema-ico" class="ico"><use href="#i-sun"/></svg></button>
+      <button id="btn-arch" class="icono" aria-label="Archivos" title="Archivos"><svg class="ico"><use href="#i-folder"/></svg></button>
+      <button id="btn-hist" class="icono" aria-label="Historial" title="Historial"><svg class="ico"><use href="#i-clock"/></svg></button>
+      <button id="btn-instalar" class="icono" aria-label="Instalar la app" title="Instalar la app" hidden><svg class="ico"><use href="#i-install"/></svg></button>
     </div>
   </header>
 
@@ -50,11 +76,17 @@
   <section id="chat" class="chat" aria-live="polite"></section>
 
   <footer class="entrada">
-    <label class="leer"><input id="leer" type="checkbox"> Leer en voz alta lo que respondo a lo que escribo</label>
-    <form id="form-chat" class="fila">
-      <button id="btn-mic" type="button" class="mic" aria-label="Hablar" hidden>🎙️</button>
-      <input id="texto" type="text" enterkeyhint="send" autocomplete="off" autocapitalize="sentences" placeholder="Escribe aquí…">
-      <button type="submit" class="enviar" aria-label="Enviar">➤</button>
+    <div class="ajustes-rapidos">
+      <button id="btn-voz" class="voz" aria-pressed="true"><svg id="voz-ico" class="ico"><use href="#i-mic"/></svg><span id="voz-txt">Voz activada</span></button>
+      <label class="leer"><input id="leer" type="checkbox"><span>Leer respuestas en voz alta</span></label>
+    </div>
+    <div id="adjuntos" class="adjuntos" aria-label="Archivos adjuntos" hidden></div>
+    <form id="form-chat" class="compositor">
+      <button id="btn-adj" type="button" class="icono" aria-label="Adjuntar archivo" title="Adjuntar archivo"><svg class="ico"><use href="#i-clip"/></svg></button>
+      <input id="archivo" type="file" multiple hidden>
+      <input id="texto" type="text" enterkeyhint="send" autocomplete="off" autocapitalize="sentences" placeholder="Escribe un mensaje" aria-label="Mensaje">
+      <button id="btn-mic" type="button" class="icono mic" aria-label="Hablar" title="Hablar" hidden><svg class="ico"><use href="#i-mic"/></svg></button>
+      <button type="submit" class="enviar" aria-label="Enviar"><svg class="ico"><use href="#i-send"/></svg></button>
     </form>
   </footer>
 </div>
@@ -62,15 +94,29 @@
 <!-- Historial de pedidos -->
 <dialog id="dlg-hist" class="dialogo">
   <form method="dialog" class="dlg-cab">
-    <strong id="hist-titulo">Todo lo que has pedido</strong>
+    <strong id="hist-titulo">Historial de pedidos</strong>
     <button class="suave" value="x">Cerrar</button>
   </form>
-  <input id="hist-buscar" type="search" placeholder="Buscar…" autocomplete="off">
+  <input id="hist-buscar" type="search" placeholder="Buscar en tus pedidos" aria-label="Buscar en tus pedidos" autocomplete="off">
   <p id="hist-info" class="estado"></p>
   <ul id="hist-lista" class="lista"></ul>
   <div class="dlg-pie">
-    <button id="hist-borrar-q" class="peligro" hidden>🗑 Borrar los que coinciden</button>
-    <button id="hist-borrar-todo" class="peligro">🗑 Borrar todo</button>
+    <button id="hist-borrar-q" class="peligro" hidden>Borrar los que coinciden</button>
+    <button id="hist-borrar-todo" class="peligro">Borrar todo</button>
+  </div>
+</dialog>
+
+<!-- Archivos: lo que subes y lo que ella crea -->
+<dialog id="dlg-arch" class="dialogo">
+  <form method="dialog" class="dlg-cab">
+    <strong>Archivos</strong>
+    <button class="suave" value="x">Cerrar</button>
+  </form>
+  <p id="arch-info" class="estado"></p>
+  <ul id="arch-lista" class="lista archivos"></ul>
+  <div class="dlg-pie">
+    <button id="arch-subir" type="button" class="primario"><svg class="ico"><use href="#i-clip"/></svg>Subir archivo</button>
+    <button id="arch-borrar-todo" class="peligro" type="button">Borrar todos</button>
   </div>
 </dialog>
 

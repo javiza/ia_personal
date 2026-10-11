@@ -7,3 +7,7 @@ ddgs>=9.0              # buscar en internet
 psycopg2-binary>=2.9   # memoria en la nube (Postgres de Render)
 numpy>=1.26            # las usa imagenes.py al importarse (las funciones de fotos no se ofrecen en el celular)
 Pillow>=10.0
+python-docx>=1.1      # crear/editar Word
+openpyxl>=3.1         # leer/crear Excel
+fpdf2>=2.7            # crear PDF
+pypdf>=4.0            # leer PDF
