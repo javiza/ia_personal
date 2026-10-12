@@ -1,4 +1,3 @@
-```html
 <!doctype html>
 <html lang="es">
 <head>
@@ -163,16 +162,6 @@
           <svg class="ico"><use href="#i-eraser"/></svg>
         </button>
 
-        <button
-          id="btn-instalar"
-          class="icono"
-          type="button"
-          aria-label="Instalar app"
-          title="Instalar app"
-          hidden
-        >
-          <svg class="ico"><use href="#i-download"/></svg>
-        </button>
 
         <button
           id="btn-tema"
@@ -197,6 +186,19 @@
         </button>
       </div>
     </header>
+
+    <section id="banner-instalar" class="banner-instalar" aria-label="Instalar aplicación" hidden>
+      <svg class="ico bi-ico" aria-hidden="true"><use href="#i-install"/></svg>
+      <div class="bi-texto">
+        <strong>Instala Jarvis</strong>
+        <span>App completa en este dispositivo, con todas sus funciones.</span>
+      </div>
+      <button id="btn-instalar" class="primario" type="button">
+        <svg class="ico" aria-hidden="true"><use href="#i-download"/></svg>
+        Instalar app
+      </button>
+      <button id="btn-instalar-cerrar" class="icono" type="button" aria-label="Ocultar" title="Ocultar">&times;</button>
+    </section>
 
     <p id="ayuda-ios" class="aviso" hidden>
       Para instalarla en iPhone: toca <b>Compartir</b> y luego
@@ -336,4 +338,3 @@
   <script src="/static/app.js"></script>
 </body>
 </html>
-```

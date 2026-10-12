@@ -1,6 +1,6 @@
 // Service worker: deja la app instalable y abre rápido, incluso sin conexión (muestra la app o una página de aviso).
 // NUNCA guarda respuestas de /api (conversaciones, archivos y papelera son privados).
-const VERSION = "jarvis-v6";
+const VERSION = "jarvis-v7";
 const BASE = ["/", "/instalar", "/static/offline.html", "/static/estilo.css", "/static/app.js", "/static/img/avatar_reposo.gif",
               "/static/img/avatar_escuchando.gif", "/static/img/avatar_pensando.gif", "/static/img/avatar_hablando.gif",
               "/static/img/icon-192.png"];

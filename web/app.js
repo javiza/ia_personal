@@ -559,31 +559,30 @@ function pintarRed() { $("#aviso-red").hidden = navigator.onLine; }
 window.addEventListener("online", pintarRed); window.addEventListener("offline", pintarRed); pintarRed();
 
 // ------------------------------------------------------------------ instalar como app
-window.addEventListener("beforeinstallprompt", (ev) => { ev.preventDefault(); E.instalador = ev; $("#btn-instalar").hidden = false; });
+// El botón vive en su propio banner (no en la barra de herramientas) y solo aparece si la app se puede instalar y aún no lo está.
+const esIOS = /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+const estaInstalada = () => matchMedia("(display-mode: standalone)").matches || matchMedia("(display-mode: window-controls-overlay)").matches || navigator.standalone === true;
+function instaladoCerrado() { try { return sessionStorage.getItem("instalar-cerrado") === "1"; } catch (e) { return false; } }
+function pintarInstalar() {
+  $("#banner-instalar").hidden = estaInstalada() || instaladoCerrado() || !(E.instalador || esIOS);
+}
+window.addEventListener("beforeinstallprompt", (ev) => { ev.preventDefault(); E.instalador = ev; pintarInstalar(); });
+window.addEventListener("appinstalled", () => { E.instalador = null; pintarInstalar(); });
 $("#btn-instalar").addEventListener("click", async () => {
-  if (!E.instalador) return; E.instalador.prompt(); await E.instalador.userChoice; E.instalador = null; $("#btn-instalar").hidden = true;
+  if (E.instalador) {
+    E.instalador.prompt();
+    try { await E.instalador.userChoice; } catch (e) { /* cerrado sin elegir */ }
+    E.instalador = null; pintarInstalar();
+  } else if (esIOS) {                         // iPhone/iPad no tienen diálogo propio: se muestran los pasos
+    $("#ayuda-ios").hidden = false; $("#ayuda-ios").scrollIntoView({ block: "nearest" });
+  }
 });
-window.addEventListener("appinstalled", () => { $("#btn-instalar").hidden = true; });
-const esIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
-const instalada = window.matchMedia("(display-mode: standalone)").matches || navigator.standalone;
-if (esIOS && !instalada) $("#ayuda-ios").hidden = false;
+$("#btn-instalar-cerrar").addEventListener("click", () => {
+  try { sessionStorage.setItem("instalar-cerrado", "1"); } catch (e) { /* sin almacenamiento */ }
+  $("#ayuda-ios").hidden = true; pintarInstalar();
+});
+pintarInstalar();
 
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
 
 iniciarApp().catch((e) => { if (e.message !== "sin sesión") { mostrarLogin(); $("#login-error").textContent = e.message; } });
-
-// // Instalación PWA
-// window.addEventListener('beforeinstallprompt', (e) => {
-//   e.preventDefault();
-//   E.instalador = e;
-//   const btn = $("#btn-instalar");
-//   if (btn) btn.hidden = false;
-// });
-
-// $("#btn-instalar").addEventListener('click', async () => {
-//   if (!E.instalador) return;
-//   E.instalador.prompt();
-//   const { outcome } = await E.instalador.userChoice;
-//   if (outcome === 'accepted') E.instalador = null;
-//   $("#btn-instalar").hidden = true;
-// });

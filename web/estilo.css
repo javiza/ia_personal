@@ -223,3 +223,21 @@ button.enviar:hover { background: var(--acento); filter: brightness(1.08); }
 @media (display-mode: standalone), (display-mode: window-controls-overlay) { .login-ayuda { display: none; } }                     /* ya instalada */
 .aviso-red { border-color: color-mix(in srgb, var(--aviso) 50%, transparent); color: var(--aviso); }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }
+
+/* banner de instalación (debajo de la cabecera, fuera de la barra de herramientas) */
+.banner-instalar { display: flex; align-items: center; gap: 12px; margin: 10px 0 0; padding: 10px 10px 10px 14px; border-radius: var(--radio);
+                   background: var(--acento-fondo); border: 1px solid color-mix(in srgb, var(--acento) 40%, transparent); }
+.banner-instalar .bi-ico { color: var(--acento); width: 24px; height: 24px; }
+.banner-instalar .bi-texto { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.3; }
+.banner-instalar .bi-texto strong { font-size: 14.5px; font-weight: 650; }
+.banner-instalar .bi-texto span { font-size: 13px; color: var(--suave); }
+.banner-instalar .primario { flex: none; padding: 8px 14px; font-size: 14px; }
+.banner-instalar .icono { flex: none; font-size: 22px; line-height: 1; }
+@media (max-width: 480px) {
+  .banner-instalar { flex-wrap: wrap; padding: 10px 12px; }
+  .banner-instalar .primario { order: 3; flex: 1; }
+  .banner-instalar .icono { order: 2; margin-left: auto; }
+  .banner-instalar .bi-ico { display: none; }
+  .banner-instalar .bi-texto { flex-basis: 100%; }
+}
+@media (display-mode: standalone), (display-mode: window-controls-overlay) { .banner-instalar { display: none; } }
