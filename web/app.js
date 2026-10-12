@@ -571,3 +571,19 @@ if (esIOS && !instalada) $("#ayuda-ios").hidden = false;
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
 
 iniciarApp().catch((e) => { if (e.message !== "sin sesión") { mostrarLogin(); $("#login-error").textContent = e.message; } });
+
+// Instalación PWA
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  E.instalador = e;
+  const btn = $("#btn-instalar");
+  if (btn) btn.hidden = false;
+});
+
+$("#btn-instalar").addEventListener('click', async () => {
+  if (!E.instalador) return;
+  E.instalador.prompt();
+  const { outcome } = await E.instalador.userChoice;
+  if (outcome === 'accepted') E.instalador = null;
+  $("#btn-instalar").hidden = true;
+});
