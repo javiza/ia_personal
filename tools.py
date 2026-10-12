@@ -71,7 +71,9 @@ TOOLS = [
        {"carpeta": {**_S, "description": "Nombre o ruta de la carpeta, ej: 'Documentos'. Vacío = todas."}}),
     _t("listar_arbol",
        "Muestra el ÁRBOL de una carpeta (subcarpetas y archivos, hasta cierta profundidad) ignorando node_modules, .git, "
-       ".venv, etc. Úsalo PRIMERO para revisar un proyecto o encontrar una carpeta como 'Escritorio/proyectos/turismo'.",
+       ".venv, etc. Úsalo PRIMERO para revisar un proyecto. Solo utiliza rutas que aparezcan en resultados reales; "
+       "si no existe, lee las sugerencias devueltas y vuelve a intentarlo con una ruta existente. Ejemplo: "
+       "'Escritorio/proyectos/jarvis'.",
        {"carpeta": {**_S, "description": "Ej: 'Escritorio/proyectos' o 'Escritorio/proyectos/turismo'."},
         "profundidad": {**_N, "description": "Niveles a mostrar (1-5). Por defecto 3."}}, ["carpeta"]),
     _t("leer_zip",
@@ -625,13 +627,43 @@ def _verificado(destino):
     return False, f"NO se creó nada en {_mostrar(destino)}"
 
 
+def _sugerir_rutas_carpeta(carpeta: str, ruta_resuelta=None) -> str:
+    """Da opciones reales cuando el modelo pide una carpeta inexistente, sin salir de las rutas permitidas."""
+    import difflib
+    candidatos = []
+    ruta = ruta_resuelta or rutas.resolver_ruta(carpeta)
+    if ruta:
+        actual = os.path.abspath(ruta)
+        # Busca el ancestro existente más cercano; así sugiere hermanos ante un nombre inventado.
+        while actual and not os.path.isdir(actual):
+            padre = os.path.dirname(actual)
+            if padre == actual:
+                actual = ""
+                break
+            actual = padre
+        if actual and any(os.path.realpath(actual) == os.path.realpath(base)
+                          or os.path.realpath(actual).startswith(os.path.realpath(base) + os.sep)
+                          for base in config.ALLOWED_DIRS):
+            try:
+                nombres = sorted(e.name + ("/" if e.is_dir(follow_symlinks=False) else "")
+                                 for e in os.scandir(actual) if not e.name.startswith("."))
+                nombre_objetivo = os.path.basename(os.path.normpath(ruta_resuelta or ruta))
+                candidatos = difflib.get_close_matches(nombre_objetivo, nombres, n=5, cutoff=0.3)
+                if not candidatos:
+                    candidatos = nombres[:12]
+                return f" Carpeta existente más cercana: '{actual}'. Opciones reales: {', '.join(candidatos) or '(vacía)'}."
+            except OSError:
+                pass
+    return " Comprueba la ruta con listar_archivos('Escritorio') y usa exactamente el nombre que aparezca."
+
+
 def listar_archivos(carpeta: str = "") -> str:
     if carpeta:
         base = rutas.resolver_ruta(carpeta)
         if base is None:
             return f"No tengo permiso para acceder a '{carpeta}'."
         if not os.path.isdir(base):
-            return f"No encontré la carpeta '{carpeta}'."
+            return f"No encontré la carpeta '{carpeta}'." + _sugerir_rutas_carpeta(carpeta, base)
         dirs = [base]
     else:
         dirs = [d for d in config.ALLOWED_DIRS if os.path.isdir(d)]
@@ -663,7 +695,8 @@ def listar_arbol(carpeta: str, profundidad=3) -> str:
     if base is None:
         return f"No tengo permiso para acceder a '{carpeta}'."
     if not os.path.isdir(base):
-        return f"No encontré la carpeta '{carpeta}'. Prueba listar_archivos('Escritorio') para ver qué hay."
+        return (f"No encontré la carpeta '{carpeta}'." + _sugerir_rutas_carpeta(carpeta, base)
+                + " No inventes otra ruta: usa una de las opciones existentes.")
     try:
         prof = max(1, min(int(profundidad or 3), 5))
     except (TypeError, ValueError):
@@ -742,7 +775,7 @@ def buscar_en_archivos(carpeta: str, texto: str, extension: str = "") -> str:
     if base is None:
         return f"No tengo permiso para acceder a '{carpeta}'."
     if not os.path.isdir(base):
-        return f"No encontré la carpeta '{carpeta}'."
+        return f"No encontré la carpeta '{carpeta}'." + _sugerir_rutas_carpeta(carpeta, base)
     if not texto:
         return "Dime qué texto buscar."
     aguja, hallazgos, revisados = texto.lower(), [], 0

@@ -360,6 +360,7 @@ def _preguntar_anthropic(historial, modelo, bitacora):
 # ------------------------------------------------------------------ cadena de respaldo
 _groq_cache = None            # (instante, {ids}) de los modelos que Groq ofrece hoy
 _groq_avisados = set()
+_gemini_cache = None          # (instante, [ids]) modelos Gemini habilitados para esta API key
 
 
 def _groq_disponibles():
@@ -402,6 +403,56 @@ def _modelos_groq():
     return buenos or list(config.GROQ_MODELOS)
 
 
+def _gemini_disponibles(forzar=False):
+    """Consulta la API de Google para no insistir con modelos retirados/no habilitados."""
+    global _gemini_cache
+    ahora = time.time()
+    if not forzar and _gemini_cache and ahora - _gemini_cache[0] < config.GEMINI_CACHE_SEGUNDOS:
+        return _gemini_cache[1]
+    clave = os.environ.get("GEMINI_API_KEY")
+    if not clave:
+        return []
+    try:
+        r = requests.get(
+            "https://generativelanguage.googleapis.com/v1beta/models",
+            headers={"x-goog-api-key": clave}, timeout=8,
+            params={"pageSize": 1000},
+        )
+        if r.status_code != 200:
+            return None
+        modelos = []
+        for item in r.json().get("models", []):
+            nombre = (item.get("name") or "").removeprefix("models/")
+            metodos = item.get("supportedGenerationMethods") or []
+            if nombre.startswith("gemini-") and "generateContent" in metodos and not any(
+                x in nombre.lower() for x in ("embedding", "aqa", "tts", "image", "robotics")
+            ):
+                modelos.append(nombre)
+        # Los modelos flash suelen ofrecer mejor latencia/coste para un asistente general.
+        modelos.sort(key=lambda m: ("flash" not in m.lower(), "lite" not in m.lower(), m))
+        _gemini_cache = (ahora, modelos)
+        return modelos
+    except Exception:
+        return None
+
+
+def _modelos_gemini():
+    """Prefiere modelos configurados si la API los anuncia; si no, descubre un Flash vigente."""
+    disponibles = _gemini_disponibles()
+    configurados = list(config.GEMINI_MODELOS)
+    if disponibles is None:
+        # Sin poder consultar la API, intenta la configuración y deja que el backend reporte el error.
+        return configurados
+    if not disponibles:
+        return configurados
+    elegidos = [m for m in configurados if m in disponibles]
+    # Conserva alternativas adicionales: un modelo puede aparecer en el catálogo y aun así
+    # no estar habilitado para el endpoint compatible OpenAI de una cuenta concreta.
+    flash = [m for m in disponibles if "flash" in m.lower()]
+    candidatos = elegidos + [m for m in (flash or disponibles) if m not in elegidos]
+    return candidatos[:4]
+
+
 def _cadena():
     """Lista de (backend, modelo) en el orden en que se probarán."""
     cadena = []
@@ -409,11 +460,13 @@ def _cadena():
         if backend == "ollama":
             cadena.append(("ollama", config.OLLAMA_MODEL))
         elif backend == "groq":
-            cadena += [("groq", m) for m in _modelos_groq()]
+            if os.environ.get("GROQ_API_KEY"):
+                cadena += [("groq", m) for m in _modelos_groq()]
         elif backend == "gemini":
-            cadena += [("gemini", m) for m in config.GEMINI_MODELOS]
+            cadena += [("gemini", m) for m in _modelos_gemini()]
         elif backend == "anthropic":
-            cadena.append(("anthropic", config.ANTHROPIC_MODEL))
+            if os.environ.get("ANTHROPIC_API_KEY"):
+                cadena.append(("anthropic", config.ANTHROPIC_MODEL))
     return cadena
 
 
@@ -500,6 +553,12 @@ def preguntar(historial: list[dict]):
             print(f"⚠️  {backend}:{modelo} no pudo ({motivo}) tras {time.time() - t0:.1f}s. Pruebo el siguiente…")
             if any(k in motivo for k in _MOTIVOS_DE_BACKEND):
                 descartados.add(backend)
+            if backend == "gemini" and ("404" in motivo or "no longer available" in motivo.lower()
+                                        or "not found" in motivo.lower()):
+                # El modelo puntual puede estar retirado; invalida el catálogo para la próxima
+                # pregunta, pero prueba los otros modelos ya preparados para esta solicitud.
+                global _gemini_cache
+                _gemini_cache = None
             continue
         except Exception as e:           # un error raro de un cerebro no debe tumbar a los demás
             fallos.append((backend, str(e)))
@@ -544,7 +603,7 @@ def _vision(backend, datos: bytes, media_type: str, pregunta: str) -> str:
         if not api_key:
             raise _SinCapacidad("falta GEMINI_API_KEY")
         r = _post(config.GEMINI_URL,
-                  {"model": config.GEMINI_MODELOS[0], "messages": [{"role": "user", "content": [
+                  {"model": (_modelos_gemini() or config.GEMINI_MODELOS)[0], "messages": [{"role": "user", "content": [
                       {"type": "text", "text": pregunta},
                       {"type": "image_url", "image_url": {"url": f"data:{media_type};base64,{b64}"}}]}]},
                   headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
@@ -598,7 +657,7 @@ def completar(sistema: str, usuario: str, max_tokens: int = 400):
                 api_key = os.environ.get("GEMINI_API_KEY")
                 if not api_key:
                     continue
-                for modelo in list(reversed(config.GEMINI_MODELOS)):          # primero el más liviano
+                for modelo in list(reversed(_modelos_gemini() or config.GEMINI_MODELOS)):  # primero el más liviano
                     try:
                         r = _post(config.GEMINI_URL,
                                   {"model": modelo, "messages": mensajes, "max_tokens": max_tokens + 600,

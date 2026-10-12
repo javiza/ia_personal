@@ -125,7 +125,7 @@ GROQ_VISION_MODEL = os.environ.get("GROQ_VISION_MODEL", "qwen/qwen3.6-27b")
 
 # Si la nube dice "espera N segundos" y N es menor que esto, espera y reintenta en el mismo
 # modelo; si es más, pasa al siguiente cerebro de la lista.
-ESPERA_MAX_REINTENTO = 35
+ESPERA_MAX_REINTENTO = 8  # reintentos breves; esperas largas se delegan al siguiente proveedor
 
 ANTHROPIC_MODEL = "claude-sonnet-5-5"
 
@@ -133,7 +133,11 @@ ANTHROPIC_MODEL = "claude-sonnet-5-5"
 # Se usa su endpoint compatible con OpenAI. Si un modelo da 404, mira los nombres vigentes en
 # https://ai.google.dev/gemini-api/docs/models y cámbialos aquí.
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
-GEMINI_MODELOS = ["gemini-2.5-flash", "gemini-2.5-flash-lite"]   # cada uno tiene su propio cupo gratis
+# Se puede sobrescribir sin editar el código: GEMINI_MODELOS=gemini-2.5-flash,gemini-2.5-flash-lite
+GEMINI_MODELOS = [x.strip() for x in os.environ.get(
+    "GEMINI_MODELOS", "gemini-2.5-flash" #quite "gemini-2.5-flash-lite" porque da error 404 en junio de 2026
+).split(",") if x.strip()]
+GEMINI_CACHE_SEGUNDOS = 1800          # vuelve a consultar modelos disponibles cada 30 minutos
 GEMINI_TIMEOUT = 60
 
 # La API key se lee de la variable de entorno ANTHROPIC_API_KEY (no la pongas aquí).
