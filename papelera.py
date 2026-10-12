@@ -6,7 +6,12 @@ Papelera REAL del sistema operativo (la misma que ves en el explorador de archiv
   restaurar(entrada) ..... lo devuelve a su carpeta original
   borrar_definitivo(e) ... lo elimina para siempre (NO se puede deshacer)
 
-Soporte:
+Dos «papeleras», según dónde corra Jarvis:
+  - En tu computador (escritorio, o servidor en modo PC): la papelera REAL del sistema.
+  - En la versión nube/celular (config.MODO_WEB): ese servidor no tiene escritorio ni papelera de sistema, así que usa una
+    papelera propia y oculta DENTRO del espacio de archivos (espacio/.papelera, mismo formato estándar). Funciona en cualquier SO.
+
+Soporte (papelera del sistema):
   Linux ... todo (estándar freedesktop: ~/.local/share/Trash y las papeleras de discos externos).
   macOS ... enviar, listar y borrar definitivo. Restaurar NO: macOS no guarda de dónde vino cada archivo
             en un sitio que un programa pueda leer; se restaura desde el Finder («Devolver»).
@@ -19,6 +24,9 @@ import os
 import shutil
 import sys
 import urllib.parse
+
+import config
+import rutas
 
 LINUX = sys.platform.startswith("linux")
 MAC = sys.platform == "darwin"
@@ -44,12 +52,26 @@ class Entrada:
 
 
 # ---------------------------------------------------------------- capacidades
+def en_espacio() -> bool:
+    """True si se usa la papelera propia del espacio de la versión nube/celular."""
+    return bool(config.MODO_WEB)
+
+
+def carpeta_espacio() -> str:
+    """Papelera oculta dentro del espacio de archivos de la versión nube."""
+    return os.path.join(os.path.realpath(config.WEB_ESPACIO), ".papelera")
+
+
+def tipo() -> str:
+    return "espacio" if en_espacio() else "sistema"
+
+
 def puede_listar() -> bool:
-    return LINUX or MAC
+    return en_espacio() or LINUX or MAC
 
 
 def puede_restaurar() -> bool:
-    return LINUX
+    return en_espacio() or LINUX
 
 
 def aviso_no_soportado(accion: str) -> str:
@@ -62,7 +84,9 @@ def aviso_no_soportado(accion: str) -> str:
 
 # ---------------------------------------------------------------- enviar
 def enviar(ruta: str) -> None:
-    """Manda 'ruta' (archivo o carpeta) a la papelera del sistema. Lanza excepción si no se pudo."""
+    """Manda 'ruta' (archivo o carpeta) a la papelera. Lanza excepción si no se pudo."""
+    if en_espacio():
+        return _enviar_espacio(ruta)
     try:
         from send2trash import send2trash
     except ImportError:
@@ -144,9 +168,13 @@ def _leer_info(ruta_info: str):
     return path, fecha
 
 
-def _listar_linux():
+def _listar_espacio():
+    return _listar_linux([(carpeta_espacio(), os.path.realpath(config.WEB_ESPACIO))])
+
+
+def _listar_linux(papeleras=None):
     entradas = []
-    for papelera, raiz in _papeleras_linux():
+    for papelera, raiz in (papeleras if papeleras is not None else _papeleras_linux()):
         carpeta_info = os.path.join(papelera, "info")
         carpeta_files = os.path.join(papelera, "files")
         try:
@@ -201,6 +229,8 @@ def _restaurar_linux(e: Entrada) -> str:
         destino, n = f"{base}_restaurado{ext}", 2
         while os.path.lexists(destino):
             destino, n = f"{base}_restaurado{n}{ext}", n + 1
+    if not rutas._dentro_de_permitidos(destino):
+        raise PermissionError("su carpeta original no está entre las permitidas")
     os.makedirs(os.path.dirname(destino), exist_ok=True)
     shutil.move(e.id, destino)
     try:
@@ -219,6 +249,33 @@ def _borrar_linux(e: Entrada) -> None:
     except OSError:
         pass
     _limpiar_directorysizes(e._raiz, os.path.basename(e.id))
+
+
+# ---------------------------------------------------------------- papelera del espacio (versión nube/celular)
+def _enviar_espacio(ruta: str) -> None:
+    raiz = os.path.realpath(config.WEB_ESPACIO)
+    real = os.path.realpath(ruta)
+    papelera = carpeta_espacio()
+    if not real.startswith(raiz + os.sep) or real.startswith(papelera + os.sep):
+        raise PermissionError("solo se puede borrar lo que está dentro del espacio de archivos")
+    os.makedirs(os.path.join(papelera, "files"), exist_ok=True)
+    os.makedirs(os.path.join(papelera, "info"), exist_ok=True)
+    nombre = os.path.basename(ruta.rstrip(os.sep))
+    clave, n = nombre, 2
+    while os.path.lexists(os.path.join(papelera, "files", clave)) or os.path.lexists(os.path.join(papelera, "info", clave + ".trashinfo")):
+        clave, n = f"{nombre}.{n}", n + 1
+    rel = os.path.relpath(real, raiz)
+    info = os.path.join(papelera, "info", clave + ".trashinfo")
+    with open(info, "w", encoding="utf-8") as f:                    # ruta RELATIVA al espacio: sobrevive si cambia de disco
+        f.write("[Trash Info]\nPath=" + urllib.parse.quote(rel.replace(os.sep, "/")) + "\nDeletionDate="
+                + datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S") + "\n")
+    try:
+        shutil.move(ruta, os.path.join(papelera, "files", clave))
+    except Exception:
+        os.remove(info)
+        raise
+    if os.path.lexists(ruta):
+        raise OSError("no se movió a la papelera")
 
 
 # ---------------------------------------------------------------- macOS
@@ -252,7 +309,9 @@ def _borrar_mac(e: Entrada) -> None:
 # ---------------------------------------------------------------- API pública
 def listar():
     """Entradas de la papelera, la más reciente primero."""
-    if LINUX:
+    if en_espacio():
+        entradas = _listar_espacio()
+    elif LINUX:
         entradas = _listar_linux()
     elif MAC:
         entradas = _listar_mac()
@@ -264,14 +323,14 @@ def listar():
 
 def restaurar(e: Entrada) -> str:
     """Devuelve la entrada a su lugar y retorna la ruta final."""
-    if not LINUX:
+    if not (en_espacio() or LINUX):
         raise NotImplementedError(aviso_no_soportado("restaurar"))
     return _restaurar_linux(e)
 
 
 def borrar_definitivo(e: Entrada) -> None:
     """Elimina la entrada para siempre."""
-    if LINUX:
+    if en_espacio() or LINUX:
         _borrar_linux(e)
     elif MAC:
         _borrar_mac(e)

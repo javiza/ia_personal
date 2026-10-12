@@ -310,6 +310,10 @@ def _borrado_pendiente() -> bool:
     return bool(_pendiente["claves"]) and _time.time() - _pendiente["t"] < _VIGENCIA
 
 
+def _cual_papelera() -> str:
+    return "la papelera del sistema" if _pap.tipo() == "sistema" else "la papelera del espacio de archivos"
+
+
 def _tam(n) -> str:
     for unidad, f in (("GB", 1 << 30), ("MB", 1 << 20), ("KB", 1 << 10)):
         if n >= f:
@@ -348,6 +352,8 @@ def _motivo_protegido(destino):
     respaldos = os.path.realpath(config.CARPETA_RESPALDOS)
     if real == respaldos or real.startswith(respaldos + os.sep):
         return "está en los respaldos automáticos"
+    if _pap.en_espacio() and (real == _pap.carpeta_espacio() or real.startswith(_pap.carpeta_espacio() + os.sep)):
+        return "ya está en la papelera"
     if os.path.dirname(real) == os.path.realpath(config.BASE_DIR) and real.lower().endswith(".py"):
         return "es código del propio programa"
     if os.path.isdir(real):
@@ -397,7 +403,7 @@ def eliminar_archivo(lista, confirmado=False, carpeta="") -> str:
     if texto:
         return texto
     listado = ", ".join(_descripcion_ruta(d) for d in items)
-    return ("VISTA PREVIA: todavía NO se borró nada. Se enviarían a la papelera del sistema (se pueden restaurar): "
+    return (f"VISTA PREVIA: todavía NO se borró nada. Se enviarían a {_cual_papelera()} (se pueden restaurar): "
             + listado
             + (". No se pueden borrar: " + "; ".join(problemas) if problemas else "")
             + ". Díselo al usuario, pregúntale si confirma y ESPERA su respuesta; no vuelvas a llamar a esta "
@@ -426,7 +432,7 @@ def _a_papelera(items, problemas):
     _papelera_hasta["turno"] = _turno["n"] + _TURNOS_PAPELERA
     partes = []
     if hechos:
-        partes.append("Listo, lo envié a la papelera del sistema (verificado): " + ", ".join(hechos)
+        partes.append(f"Listo, lo envié a {_cual_papelera()} (verificado): " + ", ".join(hechos)
                       + ". Si te arrepientes, dime «restaura» + el nombre.")
     if fallos or problemas:
         partes.append("Con problemas: " + "; ".join(fallos + problemas))
@@ -436,7 +442,7 @@ def _a_papelera(items, problemas):
 # ---- 2) ver la papelera
 def _linea_entrada(i, e):
     fecha = f", borrado {e.fecha:%d-%m-%Y %H:%M}" if e.fecha else ""
-    donde = f", estaba en {os.path.dirname(e.origen)}" if e.origen else ""
+    donde = f", estaba en {_mostrar(e.origen)}" if e.origen else ""
     tipo = "carpeta, " if e.es_carpeta else ""
     return f"{i}. {e.nombre}{'/' if e.es_carpeta else ''} ({tipo}{'más de ' if e.aprox else ''}{_tam(e.tamano)}{fecha}{donde})"
 
@@ -526,7 +532,7 @@ def restaurar_archivo(nombre: str = "", numeros=None) -> str:
         if not e.origen:
             fallos.append(f"{e.nombre}: la papelera no guardó de dónde venía")
         elif not rutas._dentro_de_permitidos(e.origen):
-            fallos.append(f"{e.nombre}: su carpeta original ({os.path.dirname(e.origen)}) no está entre las permitidas")
+            fallos.append(f"{e.nombre}: su carpeta original ({_mostrar(os.path.dirname(e.origen))}) no está entre las permitidas")
         else:
             try:
                 destino = _pap.restaurar(e)
@@ -1370,7 +1376,9 @@ _WEB_PERMITIDAS = {"obtener_clima", "buscar_en_web", "leer_pagina_web", "guardar
                    # archivos: SOLO dentro del espacio de la web (config.WEB_ESPACIO), por rutas.resolver_ruta
                    "listar_archivos", "listar_arbol", "leer_zip", "buscar_en_archivos", "leer_archivo", "escribir_archivo",
                    "reemplazar_en_archivo", "crear_documento_word", "crear_hoja_excel", "crear_pdf",
-                   "inspeccionar_imagen", "analizar_imagen", "editar_imagen"}
+                   "inspeccionar_imagen", "analizar_imagen", "editar_imagen",
+                   # papelera propia del espacio (en la nube no existe la del sistema)
+                   "eliminar_archivo", "ver_papelera", "restaurar_archivo", "eliminar_definitivo", "vaciar_papelera"}
 
 
 def ejecutar_tool(nombre: str, args: dict) -> str:

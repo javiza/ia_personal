@@ -6,6 +6,9 @@
 #   ./iniciar.sh              con avatar
 #   ./iniciar.sh --sin-ui     solo consola
 #   ./iniciar.sh --reinstalar vuelve a instalar las librerías (por si algo quedó a medias)
+#   ./iniciar.sh --servidor   abre Jarvis como servidor de TU computador (modo PC) para usarlo desde el celular, tablet u
+#                             otro PC con la app instalable. Necesita JARVIS_WEB_CLAVE (12+ caracteres) en ~/.config/jarvis/env.
+#                             Variables: JARVIS_HOST (por defecto 127.0.0.1) y JARVIS_PUERTO (por defecto 8000).
 #
 # Variables opcionales:  JARVIS_ESPERA=3 (segundos entre reinicios)
 
@@ -27,9 +30,12 @@ log()    { echo "[$(date '+%F %T')] $*"; }
 avisar() { command -v notify-send >/dev/null 2>&1 && notify-send "Jarvis" "$1" 2>/dev/null; }
 
 REINSTALAR=0
+SERVIDOR=0
 ARGS=()
 for a in "$@"; do
-    if [ "$a" = "--reinstalar" ]; then REINSTALAR=1; else ARGS+=("$a"); fi
+    if [ "$a" = "--reinstalar" ]; then REINSTALAR=1
+    elif [ "$a" = "--servidor" ]; then SERVIDOR=1
+    else ARGS+=("$a"); fi
 done
 
 # --- 1. Elegir (o crear) el entorno virtual --------------------------------------------------
@@ -50,7 +56,7 @@ fi
 
 # --- 2. Instalar lo que falte ----------------------------------------------------------------
 # Se vuelve a revisar solo si cambió requirements.txt o si falta alguna librería importante.
-IMPORTS="requests numpy sounddevice faster_whisper openwakeword edge_tts docx openpyxl fpdf PIL mss bs4 pypdf PySide6 psycopg2"
+IMPORTS="requests numpy sounddevice faster_whisper openwakeword edge_tts docx openpyxl fpdf PIL mss bs4 pypdf PySide6 psycopg2 send2trash fastapi uvicorn"
 
 faltan() {
     "$PY" - $IMPORTS <<'PYEOF'
@@ -103,8 +109,14 @@ rapidos=0
 instalo_tras_fallo=0
 while true; do
     inicio=$(date +%s)
-    log "▶ iniciando con $PY"
-    "$PY" main.py "${ARGS[@]}"
+    if [ "$SERVIDOR" = 1 ]; then
+        HOST="${JARVIS_HOST:-127.0.0.1}"; PUERTO="${JARVIS_PUERTO:-8000}"
+        log "▶ iniciando el servidor en modo PC: http://$HOST:$PUERTO  (celular/tablet: ver README, «Jarvis en todos tus dispositivos»)"
+        JARVIS_MODO=pc "$PY" -m uvicorn servidor:app --host "$HOST" --port "$PUERTO" --proxy-headers --forwarded-allow-ips="127.0.0.1"
+    else
+        log "▶ iniciando con $PY"
+        "$PY" main.py "${ARGS[@]}"
+    fi
     codigo=$?
     log "■ terminó con código $codigo"
 

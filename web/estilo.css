@@ -68,11 +68,12 @@ input[type=text]:focus, input[type=password]:focus, input[type=search]:focus { b
 .login-sub { margin: 4px 0 20px; color: var(--suave); }
 #form-login { width: min(340px, 100%); display: grid; gap: 12px; }
 #form-login button { padding: 12px; }
+.login-ayuda { margin: 18px 0 0; font-size: 14px; } .login-ayuda a { color: var(--suave); text-underline-offset: 3px; } .login-ayuda a:hover { color: var(--acento); }
 .error { color: var(--peligro); min-height: 1.4em; margin: 0; font-size: 14px; }
 
 /* estructura */
 .app { height: 100dvh; display: flex; flex-direction: column; max-width: 780px; margin: 0 auto;
-       padding: env(safe-area-inset-top) 14px env(safe-area-inset-bottom); }
+       padding: env(safe-area-inset-top) max(14px, env(safe-area-inset-right)) env(safe-area-inset-bottom) max(14px, env(safe-area-inset-left)); }
 .cabecera { display: flex; gap: 12px; align-items: center; padding: 10px 0 12px; border-bottom: 1px solid var(--linea); }
 .avatar { flex: none; width: 48px; height: 48px; padding: 0; border-radius: 50%; background: var(--elevada); position: relative;
           border: 2px solid var(--linea-fuerte); overflow: hidden; transition: border-color .2s, box-shadow .2s; }
@@ -83,7 +84,10 @@ input[type=text]:focus, input[type=password]:focus, input[type=search]:focus { b
 @keyframes halo { 50% { box-shadow: 0 0 0 6px var(--acento-fondo); } }
 @keyframes halo-ok { 50% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--ok) 22%, transparent); } }
 .cabecera-texto { min-width: 0; flex: 1; }
-.cabecera-texto h1 { margin: 0; font-size: 17px; font-weight: 650; letter-spacing: -.01em; line-height: 1.25; }
+.cabecera-texto h1 { margin: 0; font-size: 17px; font-weight: 650; letter-spacing: -.01em; line-height: 1.25; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cabecera-texto .estado { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.modo-pc .cabecera-texto h1::after { content: "PC"; margin-left: 8px; padding: 1px 7px; border-radius: 999px; font-size: 11px; font-weight: 700; letter-spacing: .04em; vertical-align: 2px;
+                                    background: var(--acento-fondo); color: var(--acento); border: 1px solid color-mix(in srgb, var(--acento) 40%, transparent); }
 .estado { color: var(--suave); margin: 0; font-size: 13px; }
 .avatar[data-estado=pensando] ~ .cabecera-texto .estado { color: var(--aviso); }
 .herramientas { display: flex; gap: 2px; }
@@ -177,7 +181,10 @@ button.enviar:hover { background: var(--acento); filter: brightness(1.08); }
 .lista small { display: block; color: var(--tenue); font-size: 12.5px; }
 .lista .borrar { flex: none; width: 36px; height: 36px; padding: 0; background: none; color: var(--tenue); border-radius: 10px; }
 .lista .borrar:hover { background: var(--peligro-fondo); color: var(--peligro); }
-.lista.archivos li { cursor: default; }
+.lista.archivos li, .lista.papelera li { cursor: default; }
+.lista.papelera .tipo { flex: none; color: var(--aviso); display: grid; place-items: center; width: 36px; height: 36px; border-radius: 10px; background: color-mix(in srgb, var(--aviso) 14%, transparent); }
+.lista.papelera .restaurar { flex: none; width: 36px; height: 36px; padding: 0; background: none; color: var(--suave); border-radius: 10px; }
+.lista.papelera .restaurar:hover { background: var(--acento-fondo); color: var(--acento); }
 .lista.archivos .tipo { flex: none; color: var(--acento); display: grid; place-items: center; width: 36px; height: 36px; border-radius: 10px; background: var(--acento-fondo); }
 .lista.archivos .descargar { flex: none; width: 36px; height: 36px; display: grid; place-items: center; color: var(--suave); border-radius: 10px; text-decoration: none; }
 .lista.archivos .descargar:hover { background: var(--elevada); color: var(--texto); }
@@ -190,4 +197,29 @@ button.enviar:hover { background: var(--acento); filter: brightness(1.08); }
   .dialogo { width: 100vw; max-width: 100vw; margin: auto 0 0; border-radius: 20px 20px 0 0; max-height: 88dvh; border-bottom: 0; padding-bottom: calc(16px + env(safe-area-inset-bottom)); }
   .burbuja { max-width: 90%; }
 }
+/* ---- Responsivo: celular angosto, celular en horizontal, tablet y escritorio ---- */
+@media (max-width: 420px) {
+  .cabecera { gap: 8px; }
+  .avatar { width: 42px; height: 42px; }
+  button.icono { width: 34px; height: 34px; border-radius: 10px; }
+  .ico { width: 19px; height: 19px; }
+  .cabecera-texto h1 { font-size: 16px; }
+}
+@media (pointer: coarse) { button, .lista .borrar, .lista.archivos .descargar { min-height: 38px; } button.icono { min-width: 34px; } }   /* dedos: zonas de toque cómodas */
+@media (max-height: 520px) and (orientation: landscape) {                                                                          /* celular acostado */
+  .cabecera { padding: 4px 0 6px; } .avatar { width: 36px; height: 36px; }
+  .cabecera-texto .estado { display: none; }
+  .chat { padding-top: 10px; } .entrada { padding-bottom: 6px; gap: 4px; }
+  .dialogo { max-height: 94dvh; } .lista { max-height: 58dvh; }
+  .login { padding: 12px; } .login-avatar { width: 56px; height: 56px; margin-bottom: 6px; }
+}
+@media (min-width: 601px) and (max-width: 1023px) { .app { max-width: 720px; } }                                                  /* tablet */
+@media (min-width: 1024px) {                                                                                                       /* escritorio */
+  .app { max-width: 860px; }
+  .burbuja { max-width: 78%; }
+  .cuerpo, .burbuja { font-size: 16.5px; }
+}
+@media (min-width: 1600px) { html { font-size: 18px; } .app { max-width: 980px; } }                                                /* pantallas grandes */
+@media (display-mode: standalone), (display-mode: window-controls-overlay) { .login-ayuda { display: none; } }                     /* ya instalada */
+.aviso-red { border-color: color-mix(in srgb, var(--aviso) 50%, transparent); color: var(--aviso); }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }

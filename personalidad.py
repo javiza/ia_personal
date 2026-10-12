@@ -67,6 +67,8 @@ def construir_system_prompt(consulta: str = "") -> str:
                    "No sobrescribas el original si no te lo piden: guarda la versión nueva con otro nombre (ej. informe_v2.docx) y dile el nombre. "
                    "Nunca digas que lo hiciste sin llamar a la herramienta. Excepción al «sin markdown»: si el usuario escribe y necesita código, comandos o pasos, "
                    "usa bloques ``` con el lenguaje y listas con guiones; sigue evitando tablas y emojis.\n"
+                   "PAPELERA (web): aquí no existe la papelera del computador; lo que borras con eliminar_archivo va a la papelera de tu espacio "
+                   "(el usuario la ve en 🗑 Papelera). Sigue valiendo todo lo de BORRAR Y PAPELERA, con ver_papelera, restaurar_archivo y eliminar_definitivo.\n"
                    f"Archivos en tu espacio ahora (el más reciente primero): {espacio.para_prompt()}\n")
     try:
         reglas = memoria.instrucciones()

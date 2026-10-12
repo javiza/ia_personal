@@ -71,6 +71,42 @@ Borrar y eliminar para siempre siempre piden confirmación en tu **siguiente** m
 `ajustes.json`, `.git/`, el código del programa ni las carpetas base (Escritorio, Documentos...).
 Soporte: **Linux** completo · **macOS** enviar, ver y borrar definitivo (restaurar: desde el Finder) · **Windows** solo enviar.
 Restaurar solo devuelve a carpetas permitidas (`config.ALLOWED_DIRS`).
+En la versión **nube/Render** no existe una papelera de sistema, así que usa una papelera propia y oculta dentro del espacio de
+archivos (`espacio/.papelera`); funciona igual (🗑 Papelera en la app, o hablándole).
+
+## Jarvis en todos tus dispositivos (app instalable)
+
+La app web es una **PWA**: se instala desde el navegador en iPhone/iPad, Android, Windows, Mac, Linux y ChromeOS, abre en su
+propia ventana, se adapta a pantalla chica, tablet y escritorio (también en horizontal) y abre aunque no haya conexión.
+Pasos por aparato: abre **`/instalar`** en tu Jarvis (o toca «Cómo instalar» en la pantalla de acceso). Mantén pulsado el icono
+instalado para los atajos **Papelera · Archivos · Historial**.
+
+Hay dos formas de usarla, y la diferencia importa:
+
+| | **Modo nube** (Render, lo de `render.yaml`) | **Modo PC** (`./iniciar.sh --servidor`) |
+|---|---|---|
+| Dónde corre | En un servidor de internet | En **tu computador** |
+| Archivos | Solo su «espacio» (lo que subes y crea) | Tus carpetas reales (Escritorio, Documentos…); lo que subes cae en `~/JarvisArchivos` |
+| Papelera | La del espacio (`espacio/.papelera`) | **La papelera real de tu computador** |
+| Pantalla, ventanas, video, imágenes IA… | No (un servidor no tiene tu pantalla) | **Sí, todo** |
+| Disponible si tu PC está apagado | Sí | No |
+
+**Para no perder ninguna función desde el celular, usa el modo PC**: el celular es solo el control remoto y todo se ejecuta en tu PC.
+
+### Modo PC paso a paso (Linux/macOS)
+
+1. En `~/.config/jarvis/env` pon una clave **larga** (12+ caracteres; el servidor se niega a abrir con una más corta):
+   `JARVIS_WEB_CLAVE=una-frase-larga-y-unica`
+2. En el PC: `./iniciar.sh --servidor` (queda en `http://127.0.0.1:8000`, solo visible desde ese computador).
+3. Para llegar desde el celular **sin abrir tu PC a internet** usa [Tailscale](https://tailscale.com) (gratis, red privada):
+   instálalo en el PC y en el celular con la misma cuenta y en el PC ejecuta `tailscale serve --bg 8000`.
+   Te da una dirección `https://tu-pc.….ts.net` que solo abren tus aparatos. **Hace falta https** para instalar la app y usar el
+   micrófono; por eso no sirve `http://192.168.x.x`.
+4. En el celular abre esa dirección → `/instalar` → instalar. Entras con tu clave.
+
+⚠️ El modo PC da control de tus archivos a quien tenga la clave y la dirección. No lo publiques en internet abierto (ni con
+túneles públicos): úsalo solo por Tailscale o desde el mismo PC. Windows: el servidor corre igual
+(`set JARVIS_MODO=pc` y `uvicorn servidor:app`), pero la papelera de Windows solo permite *enviar* (ver arriba).
 
 ## Recuerda todos tus prompts
 

@@ -4,6 +4,13 @@ Versión WEB / CELULAR de Jarvis: un servidor (FastAPI) + una app instalable (PW
   Local:    JARVIS_WEB_CLAVE=miclave uvicorn servidor:app --port 8000      -> http://localhost:8000
   Render:   ver render.yaml y el README (sección «En el celular»).
 
+DOS MODOS (variable JARVIS_MODO):
+  nube (por defecto) ... el servidor (p. ej. Render) NO es tu computador: solo herramientas seguras y archivos dentro
+                         de su «espacio». Es lo que usa render.yaml.
+  pc .................... el servidor corre EN TU COMPUTADOR con TODAS las herramientas (tus carpetas, la papelera del
+                         sistema, pantalla, ventanas...). Tu celular, tablet u otro PC lo usan como control remoto con esta
+                         misma app instalable. Exige una clave de 12 caracteres o más. Ver README, «Jarvis en todos tus dispositivos».
+
 Usa el MISMO cerebro, memoria e historial que la versión de escritorio (nucleo.Asistente). Diferencias:
   - Acceso protegido con una clave (JARVIS_WEB_CLAVE): sin ella el servidor no atiende a nadie.
   - Modo web: herramientas seguras (buscar en internet, leer páginas, clima, memoria) y archivos SOLO dentro del
@@ -17,7 +24,13 @@ import os
 import threading
 import time
 
-os.environ["JARVIS_MODO_WEB"] = "1"      # antes de importar config/tools
+MODO = os.environ.get("JARVIS_MODO", "nube").strip().lower()
+PC = MODO == "pc"
+if PC:                                    # tu computador: todas las herramientas; lo subido cae en ~/JarvisArchivos
+    os.environ.pop("JARVIS_MODO_WEB", None)
+    os.environ.setdefault("JARVIS_ESPACIO", os.path.join(os.path.expanduser("~"), "JarvisArchivos"))
+else:                                     # servidor en la nube: modo seguro
+    os.environ["JARVIS_MODO_WEB"] = "1"   # antes de importar config/tools
 
 import requests
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
@@ -28,11 +41,13 @@ import ajustes
 import config
 import espacio
 import memoria
+import papelera
 
 AQUI = os.path.dirname(os.path.abspath(__file__))
 WEB = os.path.join(AQUI, "web")
 
 CLAVE = os.environ.get("JARVIS_WEB_CLAVE", "").strip()
+CLAVE_MIN_PC = 12                         # en modo PC la clave abre TU computador: no se acepta una corta
 SECRETO = (os.environ.get("JARVIS_SECRETO", "").strip() or hashlib.sha256(("jarvis-web|" + CLAVE).encode()).hexdigest())
 COOKIE = "jarvis_sesion"
 DURACION = 30 * 24 * 3600
@@ -70,9 +85,17 @@ def _token_valido(token: str) -> bool:
         return False
 
 
-def exigir_sesion(request: Request):
+def _problema_clave():
     if not CLAVE:
-        raise HTTPException(503, "El servidor no tiene JARVIS_WEB_CLAVE configurada.")
+        return "El servidor no tiene JARVIS_WEB_CLAVE configurada."
+    if PC and len(CLAVE) < CLAVE_MIN_PC:
+        return f"En modo PC la clave (JARVIS_WEB_CLAVE) debe tener al menos {CLAVE_MIN_PC} caracteres."
+    return ""
+
+
+def exigir_sesion(request: Request):
+    if _problema_clave():
+        raise HTTPException(503, _problema_clave())
     if not _token_valido(request.cookies.get(COOKIE, "")):
         raise HTTPException(401, "Falta iniciar sesión.")
 
@@ -98,8 +121,8 @@ def _fallo(ip: str):
 
 @app.post("/api/login")
 async def login(request: Request, response: Response):
-    if not CLAVE:
-        raise HTTPException(503, "El servidor no tiene JARVIS_WEB_CLAVE configurada.")
+    if _problema_clave():
+        raise HTTPException(503, _problema_clave())
     ip = request.client.host if request.client else "?"
     if _bloqueado(ip):
         raise HTTPException(429, "Demasiados intentos. Espera 10 minutos.")
@@ -140,7 +163,9 @@ def estado():
         pass
     return {"nombre": ajustes.obtener_nombre(), "prompts": memoria.contar_prompts(), "nube": nube_txt,
             "dictado_servidor": bool(os.environ.get("GROQ_API_KEY")),
-            "max_archivo": config.WEB_MAX_ARCHIVO, "extensiones": sorted(config.WEB_EXT_PERMITIDAS)}
+            "max_archivo": config.WEB_MAX_ARCHIVO, "extensiones": sorted(config.WEB_EXT_PERMITIDAS),
+            "modo": "pc" if PC else "nube",
+            "papelera": {"tipo": papelera.tipo(), "listar": papelera.puede_listar(), "restaurar": papelera.puede_restaurar()}}
 
 
 @app.post("/api/chat", dependencies=[Depends(exigir_sesion)])
@@ -221,24 +246,153 @@ def descargar(ruta: str):
 
 @app.post("/api/archivos/borrar", dependencies=[Depends(exigir_sesion)])
 async def borrar_archivos(request: Request):
-    """Cuerpo: {"ruta": "informe.docx"}  ·  {"todo": true}"""
+    """
+    Manda archivos a la papelera (se pueden restaurar desde 🗑 Papelera).
+    Cuerpo: {"ruta": "informe.docx"}  ·  {"todo": true}  ·  con "definitivo": true no pasa por la papelera
+    (solo lo usa la app al quitar un adjunto que acabas de subir y no enviaste).
+    """
+    try:
+        datos = await request.json()
+    except Exception:
+        raise HTTPException(400, "Petición inválida.")
+    definitivo = datos.get("definitivo") is True and datos.get("todo") is not True
+    if datos.get("todo") is True:
+        rutas_ = [a["ruta"] for a in espacio.listar()]
+    else:
+        rutas_ = [str(datos.get("ruta", ""))]
+    import anyio
+
+    def _borrar():
+        n, fallos = 0, []
+        with _lock_papelera:
+            for r in rutas_:
+                real = espacio.ruta_segura(r)
+                if not real:
+                    continue
+                try:
+                    if definitivo:
+                        os.remove(real)
+                    else:
+                        papelera.enviar(real)
+                    n += 1
+                except Exception as e:
+                    fallos.append(f"{os.path.basename(real)}: {e}")
+        return n, fallos
+
+    n, fallos = await anyio.to_thread.run_sync(_borrar)
+    if not n and fallos:
+        raise HTTPException(500, "No pude mandarlo a la papelera: " + "; ".join(fallos))
+    if not n and datos.get("todo") is not True:
+        raise HTTPException(404, "No encontré ese archivo.")
+    return {"borrados": n, "fallos": fallos}
+
+
+# ------------------------------------------------------------------ papelera (ver, restaurar, eliminar para siempre)
+_lock_papelera = threading.Lock()
+
+
+def _id_publico(e) -> str:
+    """Identificador opaco: así el navegador nunca manda (ni ve) rutas reales del disco, y solo se puede tocar lo que está en la papelera."""
+    return hashlib.sha256(e.id.encode("utf-8", "replace")).hexdigest()[:24]
+
+
+def _ruta_visible(ruta):
+    if not ruta:
+        return ""
+    if not PC:                                           # en la nube no se revelan rutas del servidor
+        try:
+            return os.path.relpath(ruta, os.path.realpath(config.WEB_ESPACIO)).replace(os.sep, "/")
+        except ValueError:
+            return os.path.basename(ruta)
+    return ruta
+
+
+def _json_entrada(e) -> dict:
+    return {"id": _id_publico(e), "nombre": e.nombre, "carpeta": e.es_carpeta, "bytes": e.tamano, "aprox": e.aprox,
+            "origen": _ruta_visible(e.origen), "fecha": e.fecha.strftime("%d/%m/%Y %H:%M") if e.fecha else ""}
+
+
+def _info_papelera() -> dict:
+    return {"tipo": papelera.tipo(), "listar": papelera.puede_listar(), "restaurar": papelera.puede_restaurar()}
+
+
+@app.get("/api/papelera", dependencies=[Depends(exigir_sesion)])
+async def ver_papelera():
+    import anyio
+
+    def _leer():
+        base = _info_papelera()
+        if not papelera.puede_listar():
+            return {**base, "items": [], "mensaje": papelera.aviso_no_soportado("ver la papelera")}
+        try:
+            with _lock_papelera:
+                entradas = papelera.listar()
+        except (PermissionError, NotImplementedError) as e:
+            return {**base, "items": [], "mensaje": str(e)}
+        return {**base, "items": [_json_entrada(e) for e in entradas[:500]], "total": len(entradas),
+                "bytes": sum(e.tamano for e in entradas)}
+    return await anyio.to_thread.run_sync(_leer)
+
+
+async def _cuerpo_ids(request: Request):
     try:
         datos = await request.json()
     except Exception:
         raise HTTPException(400, "Petición inválida.")
     if datos.get("todo") is True:
-        rutas_ = [a["ruta"] for a in espacio.listar()]
-    else:
-        rutas_ = [str(datos.get("ruta", ""))]
-    n = 0
-    for r in rutas_:
-        real = espacio.ruta_segura(r)
-        if real:
-            os.remove(real)
-            n += 1
-    if not n and datos.get("todo") is not True:
-        raise HTTPException(404, "No encontré ese archivo.")
-    return {"borrados": n}
+        return None
+    ids = datos.get("ids")
+    if not isinstance(ids, list) or not ids or not all(isinstance(i, str) for i in ids) or len(ids) > 5000:
+        raise HTTPException(400, "Indica qué elementos.")
+    return set(ids)
+
+
+@app.post("/api/papelera/restaurar", dependencies=[Depends(exigir_sesion)])
+async def restaurar_de_papelera(request: Request):
+    """Cuerpo: {"ids": [...]}. Devuelve cada cosa a su carpeta original (nunca pisa algo existente)."""
+    ids = await _cuerpo_ids(request)
+    if ids is None:
+        raise HTTPException(400, "Indica qué elementos.")
+    if not papelera.puede_restaurar():
+        raise HTTPException(501, papelera.aviso_no_soportado("restaurar"))
+    import anyio
+
+    def _hacer():
+        hechos, fallos = 0, []
+        with _lock_papelera:
+            for e in papelera.listar():
+                if _id_publico(e) not in ids:
+                    continue
+                try:
+                    papelera.restaurar(e)
+                    hechos += 1
+                except Exception as ex:
+                    fallos.append(f"{e.nombre}: {ex}")
+        return {"restaurados": hechos, "fallos": fallos}
+    return await anyio.to_thread.run_sync(_hacer)
+
+
+@app.post("/api/papelera/borrar", dependencies=[Depends(exigir_sesion)])
+async def borrar_de_papelera(request: Request):
+    """Cuerpo: {"ids": [...]} o {"todo": true}. ELIMINA PARA SIEMPRE (la app lo confirma con el usuario antes)."""
+    ids = await _cuerpo_ids(request)
+    if not papelera.puede_listar():
+        raise HTTPException(501, papelera.aviso_no_soportado("borrar definitivamente"))
+    import anyio
+
+    def _hacer():
+        hechos, fallos = 0, []
+        with _lock_papelera:
+            for e in papelera.listar():
+                if ids is not None and _id_publico(e) not in ids:
+                    continue
+                try:
+                    papelera.borrar_definitivo(e)
+                    hechos += 1
+                except Exception as ex:
+                    fallos.append(f"{e.nombre}: {ex}")
+        return {"borrados": hechos, "fallos": fallos}
+    return await anyio.to_thread.run_sync(_hacer)
 
 
 @app.get("/api/historial", dependencies=[Depends(exigir_sesion)])
@@ -335,6 +489,12 @@ def inicio():
     return FileResponse(os.path.join(WEB, "index.html"), headers=_SIN_CACHE)
 
 
+@app.get("/instalar")
+def pagina_instalar():
+    """Página pública con los pasos para instalar la app en cada aparato (no muestra nada privado)."""
+    return FileResponse(os.path.join(WEB, "instalar.html"), headers=_SIN_CACHE)
+
+
 @app.get("/sw.js")
 def service_worker():
     return FileResponse(os.path.join(WEB, "sw.js"), media_type="application/javascript", headers=_SIN_CACHE)
@@ -351,11 +511,14 @@ app.mount("/static", StaticFiles(directory=WEB), name="static")
 
 @app.on_event("startup")
 def _arranque():
-    if not CLAVE:
-        print("⛔ Falta JARVIS_WEB_CLAVE: el servidor NO atenderá a nadie hasta que la configures.")
+    if _problema_clave():
+        print(f"⛔ {_problema_clave()} El servidor NO atenderá a nadie hasta que la configures.")
+    if PC:
+        print("🖥️  Modo PC: este servidor controla TU computador (archivos, papelera, pantalla). "
+              "Úsalo solo por una red privada (Tailscale) o desde esta misma máquina.")
     try:
         memoria.iniciar()            # base local + sincronización con Postgres (si hay JARVIS_DATABASE_URL)
     except Exception as e:
         print(f"⚠️  Memoria: {e}")
-    print(f"🌐 Jarvis web listo · cerebros: {' → '.join(config.ORDEN_CEREBROS)} · "
+    print(f"🌐 Jarvis web listo ({'modo PC' if PC else 'modo nube'}) · cerebros: {' → '.join(config.ORDEN_CEREBROS)} · "
           f"nube: {'sí' if config.DATABASE_URL else 'no'}")

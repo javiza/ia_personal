@@ -9,6 +9,7 @@ const E = {
   nombre: "Jarvis", voz: guardado.leer("voz", "1") === "1", estado: "reposo", pasado: [], pos: 0, borrador: "",
   escuchando: false, dictadoServidor: false, instalador: null,
   maxArchivo: 15 * 1024 * 1024, vistos: null, adjuntos: [],
+  modo: "nube", papelera: { tipo: "espacio", listar: true, restaurar: true },
 };
 const TEXTO_ESTADO = { reposo: "En reposo", escuchando: "Te escucho…", pensando: "Pensando…", hablando: "Hablando…" };
 
@@ -248,7 +249,7 @@ function pintarAdjuntos() {
     const x = el("button", "quitar", "×"); x.type = "button"; x.setAttribute("aria-label", `Quitar ${a.nombre}`);
     x.addEventListener("click", async () => {
       E.adjuntos = E.adjuntos.filter((y) => y !== a); pintarAdjuntos();
-      try { await api("/api/archivos/borrar", { ruta: a.nombre }); await avisarArchivosNuevos(true); } catch (e) { /* ya no estaba */ }
+      try { await api("/api/archivos/borrar", { ruta: a.nombre, definitivo: true }); await avisarArchivosNuevos(true); } catch (e) { /* ya no estaba */ }
     });
     c.appendChild(x); cont.appendChild(c);
   }
@@ -305,7 +306,7 @@ async function pintarArchivos() {
       const d = el("a", "descargar"); d.href = urlDescarga(a.ruta); d.setAttribute("download", a.ruta.split("/").pop()); d.setAttribute("aria-label", `Descargar ${a.ruta}`); d.appendChild(ico("download"));
       const x = el("button", "borrar"); x.type = "button"; x.setAttribute("aria-label", `Borrar ${a.ruta}`); x.appendChild(ico("trash"));
       x.addEventListener("click", async () => {
-        if (!confirm(`¿Borrar ${a.ruta}? No se puede deshacer.`)) return;
+        if (!confirm(`¿Mandar ${a.ruta} a la papelera? Podrás restaurarlo desde 🗑 Papelera.`)) return;
         try { await api("/api/archivos/borrar", { ruta: a.ruta }); await pintarArchivos(); await avisarArchivosNuevos(true); } catch (e) { if (e.message !== "sin sesión") $("#arch-info").textContent = `No se pudo borrar: ${e.message}`; }
       });
       li.append(tipo, cuerpo, d, x); ul.appendChild(li);
@@ -322,7 +323,7 @@ $("#archivo").addEventListener("change", async (ev) => {
 });
 $("#btn-arch").addEventListener("click", () => { $("#dlg-arch").showModal(); pintarArchivos(); });
 $("#arch-borrar-todo").addEventListener("click", async () => {
-  if (!confirm("¿Borrar TODOS los archivos? No se puede deshacer.")) return;
+  if (!confirm("¿Mandar TODOS los archivos a la papelera? Podrás restaurarlos desde 🗑 Papelera.")) return;
   try { await api("/api/archivos/borrar", { todo: true }); await pintarArchivos(); await avisarArchivosNuevos(true); } catch (e) { if (e.message !== "sin sesión") $("#arch-info").textContent = `No pude borrar: ${e.message}`; }
 });
 // arrastrar y soltar archivos (computador)
@@ -341,6 +342,51 @@ $("#texto").addEventListener("keydown", (ev) => {
   } else if (ev.key === "ArrowDown" && E.pos < E.pasado.length) {
     ev.preventDefault(); E.pos++; c.value = E.pos === E.pasado.length ? E.borrador : E.pasado[E.pos];
   }
+});
+
+// ------------------------------------------------------------------ papelera
+async function pintarPapelera(aviso = "") {
+  const info = $("#pap-info"), ul = $("#pap-lista");
+  try {
+    const r = await api("/api/papelera");
+    E.papelera = { tipo: r.tipo, listar: r.listar, restaurar: r.restaurar };
+    ul.replaceChildren(); $("#pap-vaciar").hidden = !r.items.length;
+    const donde = r.tipo === "sistema" ? "la papelera de tu computador" : "la papelera de tu espacio de archivos";
+    const base = r.mensaje ? r.mensaje
+      : r.items.length ? `${r.total} elemento${r.total === 1 ? "" : "s"} (${tamano(r.bytes)}) en ${donde}. Lo más reciente primero.`
+      : `Está vacía (${donde}).`;
+    info.textContent = aviso ? `${aviso} ${base}` : base;
+    for (const a of r.items) {
+      const li = el("li"), tipo = el("div", "tipo"), cuerpo = el("div", "texto", a.nombre + (a.carpeta ? "/" : ""));
+      tipo.appendChild(ico(a.carpeta ? "folder" : "file"));
+      cuerpo.appendChild(el("small", "", [`${a.aprox ? "más de " : ""}${tamano(a.bytes)}`, a.fecha && `borrado ${a.fecha}`, a.origen && `estaba en ${a.origen}`].filter(Boolean).join(" · ")));
+      li.append(tipo, cuerpo);
+      if (r.restaurar) {
+        const rs = el("button", "restaurar"); rs.type = "button"; rs.title = "Restaurar"; rs.setAttribute("aria-label", `Restaurar ${a.nombre}`); rs.appendChild(ico("undo"));
+        rs.addEventListener("click", async () => {
+          try {
+            const x = await api("/api/papelera/restaurar", { ids: [a.id] });
+            await pintarPapelera(x.restaurados ? `Restaurado «${a.nombre}».` : `No pude restaurarlo: ${(x.fallos || []).join("; ") || "error"}.`);
+            await avisarArchivosNuevos(true); if ($("#dlg-arch").open) pintarArchivos();
+          } catch (e) { if (e.message !== "sin sesión") info.textContent = `No pude restaurar: ${e.message}`; }
+        });
+        li.appendChild(rs);
+      }
+      const x = el("button", "borrar"); x.type = "button"; x.title = "Eliminar para siempre"; x.setAttribute("aria-label", `Eliminar ${a.nombre} para siempre`); x.appendChild(ico("trash"));
+      x.addEventListener("click", async () => {
+        if (!confirm(`¿Eliminar «${a.nombre}» PARA SIEMPRE? No se podrá recuperar.`)) return;
+        try { await api("/api/papelera/borrar", { ids: [a.id] }); await pintarPapelera(`Eliminado «${a.nombre}».`); }
+        catch (e) { if (e.message !== "sin sesión") info.textContent = `No pude eliminarlo: ${e.message}`; }
+      });
+      li.appendChild(x); ul.appendChild(li);
+    }
+  } catch (e) { if (e.message !== "sin sesión") info.textContent = `No pude cargar la papelera: ${e.message}`; }
+}
+$("#btn-pap").addEventListener("click", () => { $("#dlg-pap").showModal(); pintarPapelera(); });
+$("#pap-vaciar").addEventListener("click", async () => {
+  if (!confirm("¿Vaciar la papelera? Todo lo que hay en ella se eliminará PARA SIEMPRE.")) return;
+  try { const x = await api("/api/papelera/borrar", { todo: true }); await pintarPapelera(`Eliminé ${x.borrados} elemento${x.borrados === 1 ? "" : "s"} para siempre.`); }
+  catch (e) { if (e.message !== "sin sesión") $("#pap-info").textContent = `No pude vaciarla: ${e.message}`; }
 });
 
 // Limpiar pantalla: oculta la conversación anterior (el historial NO se borra: sigue en 🕘 y en la memoria).
@@ -476,6 +522,9 @@ $("#form-login").addEventListener("submit", async (ev) => {
 async function iniciarApp() {
   const est = await api("/api/estado");
   E.nombre = est.nombre; E.dictadoServidor = est.dictado_servidor; if (est.max_archivo) E.maxArchivo = est.max_archivo;
+  E.modo = est.modo || "nube"; if (est.papelera) E.papelera = est.papelera;
+  $("#app").classList.toggle("modo-pc", E.modo === "pc");
+  $("#btn-pap").title = E.papelera.tipo === "sistema" ? "Papelera del computador" : "Papelera";
   const ext = (est.extensiones || []).join(","); if (ext) $("#archivo").accept = ext;
   avisarArchivosNuevos(true);
   document.title = est.nombre; $("#nombre").textContent = est.nombre;
@@ -495,7 +544,19 @@ async function iniciarApp() {
     } catch (e) { /* sin historial no pasa nada */ }
     mostrarInicio();
   }
+  abrirAtajo();
 }
+
+// Atajos de la app instalada (mantener pulsado el icono): /?abrir=papelera | archivos | historial
+function abrirAtajo() {
+  const quien = new URLSearchParams(location.search).get("abrir"); if (!quien) return;
+  history.replaceState(null, "", location.pathname);
+  const id = { papelera: "#btn-pap", archivos: "#btn-arch", historial: "#btn-hist" }[quien]; if (id) $(id).click();
+}
+
+// ------------------------------------------------------------------ sin conexión
+function pintarRed() { $("#aviso-red").hidden = navigator.onLine; }
+window.addEventListener("online", pintarRed); window.addEventListener("offline", pintarRed); pintarRed();
 
 // ------------------------------------------------------------------ instalar como app
 window.addEventListener("beforeinstallprompt", (ev) => { ev.preventDefault(); E.instalador = ev; $("#btn-instalar").hidden = false; });

@@ -36,6 +36,7 @@
     <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6 7 7M17 17l1.4 1.4M18.4 5.6 17 7M7 17l-1.4 1.4"/></symbol>
     <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z"/></symbol>
     <symbol id="i-eraser" viewBox="0 0 24 24"><path d="M19.5 20H9L4.4 15.4a2 2 0 0 1 0-2.8l8.2-8.2a2 2 0 0 1 2.8 0l5.2 5.2a2 2 0 0 1 0 2.8L13 19.5M8.5 9.5l6 6"/></symbol>
+    <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 14 4 9l5-5M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></symbol>
     <symbol id="i-install" viewBox="0 0 24 24"><rect x="6" y="2.5" width="12" height="19" rx="3"/><path d="M12 8v6M9.5 12l2.5 2.5 2.5-2.5"/></symbol>
   </defs>
 </svg>
@@ -50,6 +51,7 @@
     <button type="submit" class="primario">Entrar</button>
     <p id="login-error" class="error" role="alert"></p>
   </form>
+  <p class="login-ayuda"><a href="/instalar">Cómo instalar la app en este aparato</a></p>
 </main>
 
 <!-- App -->
@@ -66,12 +68,14 @@
       <button id="btn-limpiar" class="icono" aria-label="Limpiar pantalla" title="Limpiar pantalla (no borra tu historial)"><svg class="ico"><use href="#i-eraser"/></svg></button>
       <button id="btn-tema" class="icono" aria-label="Cambiar tema" title="Modo claro"><svg id="tema-ico" class="ico"><use href="#i-sun"/></svg></button>
       <button id="btn-arch" class="icono" aria-label="Archivos" title="Archivos"><svg class="ico"><use href="#i-folder"/></svg></button>
+      <button id="btn-pap" class="icono" aria-label="Papelera" title="Papelera"><svg class="ico"><use href="#i-trash"/></svg></button>
       <button id="btn-hist" class="icono" aria-label="Historial" title="Historial"><svg class="ico"><use href="#i-clock"/></svg></button>
       <button id="btn-instalar" class="icono" aria-label="Instalar la app" title="Instalar la app" hidden><svg class="ico"><use href="#i-install"/></svg></button>
     </div>
   </header>
 
   <p id="ayuda-ios" class="aviso" hidden>Para instalarla en iPhone: toca <b>Compartir</b> y luego <b>Agregar a pantalla de inicio</b>.</p>
+  <p id="aviso-red" class="aviso aviso-red" role="status" hidden>Sin conexión: la app abre, pero necesita internet (o tu red privada) para responder.</p>
 
   <section id="chat" class="chat" aria-live="polite"></section>
 
@@ -117,6 +121,19 @@
   <div class="dlg-pie">
     <button id="arch-subir" type="button" class="primario"><svg class="ico"><use href="#i-clip"/></svg>Subir archivo</button>
     <button id="arch-borrar-todo" class="peligro" type="button">Borrar todos</button>
+  </div>
+</dialog>
+
+<!-- Papelera: ver, restaurar o eliminar para siempre -->
+<dialog id="dlg-pap" class="dialogo">
+  <form method="dialog" class="dlg-cab">
+    <strong>Papelera</strong>
+    <button class="suave" value="x">Cerrar</button>
+  </form>
+  <p id="pap-info" class="estado"></p>
+  <ul id="pap-lista" class="lista papelera"></ul>
+  <div class="dlg-pie">
+    <button id="pap-vaciar" class="peligro" type="button" hidden>Vaciar papelera</button>
   </div>
 </dialog>
 
