@@ -564,22 +564,26 @@ const esIOS = /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platfo
 const estaInstalada = () => matchMedia("(display-mode: standalone)").matches || matchMedia("(display-mode: window-controls-overlay)").matches || navigator.standalone === true;
 function instaladoCerrado() { try { return sessionStorage.getItem("instalar-cerrado") === "1"; } catch (e) { return false; } }
 function pintarInstalar() {
-  $("#banner-instalar").hidden = estaInstalada() || instaladoCerrado() || !(E.instalador || esIOS);
+  // Se muestra siempre que no estés ya dentro de la app instalada: el evento de instalación no llega en todos los
+  // navegadores (ni si ya está instalada), así que sin él el botón explica cómo instalarla a mano.
+  $("#banner-instalar").hidden = estaInstalada() || instaladoCerrado() || E.recienInstalada === true;
 }
 window.addEventListener("beforeinstallprompt", (ev) => { ev.preventDefault(); E.instalador = ev; pintarInstalar(); });
-window.addEventListener("appinstalled", () => { E.instalador = null; pintarInstalar(); });
+window.addEventListener("appinstalled", () => { E.instalador = null; E.recienInstalada = true; $("#ayuda-instalar").hidden = true; pintarInstalar(); });
 $("#btn-instalar").addEventListener("click", async () => {
   if (E.instalador) {
     E.instalador.prompt();
-    try { await E.instalador.userChoice; } catch (e) { /* cerrado sin elegir */ }
-    E.instalador = null; pintarInstalar();
+    try { const r = await E.instalador.userChoice; if (r && r.outcome === "accepted") E.recienInstalada = true; } catch (e) { /* cerrado sin elegir */ }
+    E.instalador = null; $("#ayuda-instalar").hidden = true; pintarInstalar();
   } else if (esIOS) {                         // iPhone/iPad no tienen diálogo propio: se muestran los pasos
     $("#ayuda-ios").hidden = false; $("#ayuda-ios").scrollIntoView({ block: "nearest" });
+  } else {                                    // el navegador no dio el evento: instrucciones manuales
+    $("#ayuda-instalar").hidden = !$("#ayuda-instalar").hidden;
   }
 });
 $("#btn-instalar-cerrar").addEventListener("click", () => {
   try { sessionStorage.setItem("instalar-cerrado", "1"); } catch (e) { /* sin almacenamiento */ }
-  $("#ayuda-ios").hidden = true; pintarInstalar();
+  $("#ayuda-ios").hidden = true; $("#ayuda-instalar").hidden = true; pintarInstalar();
 });
 pintarInstalar();
 
