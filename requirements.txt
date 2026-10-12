@@ -16,3 +16,4 @@ ddgs>=9.0              # buscar en internet
 pypdf>=4.0             # leer PDFs
 imageio-ffmpeg>=0.5   # trae su propio ffmpeg: editar y crear video sin instalar nada más
 psycopg2-binary>=2.9     # memoria en la nube (Postgres de Render)
+Send2Trash>=1.8.2        # mandar archivos a la papelera real del sistema

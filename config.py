@@ -84,12 +84,12 @@ WHISPER_VAD_FILTER = True
 #   "groq"      -> nube gratis con límites; sus modelos traen filtros de seguridad propios.
 #   "anthropic" -> Claude (de pago, por uso); también trae sus propias normas.
 # Si quieres que NUNCA use una nube con filtros: ORDEN_CEREBROS = ["ollama"]
-ORDEN_CEREBROS = ["groq", "ollama"]     # groq primero (rápido); Ollama queda de respaldo si Groq se queda sin cupo
+ORDEN_CEREBROS = ["groq", "gemini", "anthropic", "ollama"]   # los que no tienen clave se saltan solos
 if os.environ.get("JARVIS_CEREBROS"):          # p. ej. en Render:  JARVIS_CEREBROS=groq,anthropic
     ORDEN_CEREBROS = [x.strip() for x in os.environ["JARVIS_CEREBROS"].split(",") if x.strip()]
 
 # Ollama (local).  Instalar:  ollama pull hermes3:8b   (~5 GB; hecho para usar herramientas)
-OLLAMA_MODEL = "hermes3:8b"
+OLLAMA_MODEL = "llama3.2:3b"
 OLLAMA_VISION_MODEL = "llama3.2-vision"    # ollama pull llama3.2-vision  (para analizar fotos)
 OLLAMA_URL = "http://localhost:11434/api/chat"
 OLLAMA_NUM_CTX = 8192                      # memoria de la conversación; con menos se corta el prompt
@@ -125,16 +125,24 @@ GROQ_VISION_MODEL = os.environ.get("GROQ_VISION_MODEL", "qwen/qwen3.6-27b")
 
 # Si la nube dice "espera N segundos" y N es menor que esto, espera y reintenta en el mismo
 # modelo; si es más, pasa al siguiente cerebro de la lista.
-ESPERA_MAX_REINTENTO = 12
+ESPERA_MAX_REINTENTO = 35
 
 ANTHROPIC_MODEL = "claude-sonnet-5-5"
+
+# Gemini (Google AI Studio, capa gratis). Clave en ~/.config/jarvis/env:  GEMINI_API_KEY=...
+# Se usa su endpoint compatible con OpenAI. Si un modelo da 404, mira los nombres vigentes en
+# https://ai.google.dev/gemini-api/docs/models y cámbialos aquí.
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+GEMINI_MODELOS = ["gemini-2.5-flash", "gemini-2.5-flash-lite"]   # cada uno tiene su propio cupo gratis
+GEMINI_TIMEOUT = 60
+
 # La API key se lee de la variable de entorno ANTHROPIC_API_KEY (no la pongas aquí).
 # La de Groq, de GROQ_API_KEY.
 
 # Cuántas vueltas herramienta->modelo puede dar en una sola petición (tareas de varios
 # pasos: buscar -> leer página -> resumir -> guardar). Más = más capaz pero más lento.
 MAX_TURNOS_TOOL = 12
-MAX_CHARS_RESULTADO_TOOL = 5000    # tope de texto que una herramienta devuelve al modelo
+MAX_CHARS_RESULTADO_TOOL = 3000    # tope de texto que una herramienta devuelve al modelo
 MAX_CHARS_TOOL_ANTIGUO = 1500      # resultados de pasos ya superados se acortan a esto (ahorra tokens)
 
 # --- Herramientas (tools) ---
@@ -218,7 +226,7 @@ PERMITIR_PANTALLA = True
 
 # --- Web ---
 WEB_TIMEOUT = 15
-WEB_MAX_CHARS = 5000        # cuánto texto de una página se le entrega al modelo
+WEB_MAX_CHARS = 3500        # cuánto texto de una página se le entrega al modelo
 WEB_MAX_RESULTADOS = 5
 
 # --- Voz de salida (TTS) ---
@@ -230,7 +238,7 @@ TTS_RATE = "+8%"
 
 # --- Memoria y aprendizaje ---
 DB_PATH = os.path.join(BASE_DIR, "memoria.sqlite3")      # copia local: siempre se usa, funciona sin internet
-MAX_HISTORY_MESSAGES = 12                  # mensajes de la conversación que se le reenvían en cada turno
+MAX_HISTORY_MESSAGES = 8                  # mensajes de la conversación que se le reenvían en cada turno
 MAX_INSTRUCCIONES_EN_PROMPT = 40           # reglas permanentes que SIEMPRE ve (son pocas y deben cumplirse)
 MAX_RECUERDOS_EN_PROMPT = 12               # datos tuyos: los más parecidos a lo que preguntas (+ los 4 más recientes)
 MAX_LECCIONES_EN_PROMPT = 6                # correcciones pasadas relevantes

@@ -93,6 +93,69 @@ def guardar_posicion(x: int, y: int):
         _escribir(datos)
 
 
+def avatar_oculto() -> bool:
+    """¿El avatar está escondido en la bandeja del sistema? (solo versión de escritorio)"""
+    return bool(_leer().get("avatar_oculto", False))
+
+
+def guardar_avatar_oculto(valor: bool):
+    with _lock:
+        datos = _leer()
+        datos["avatar_oculto"] = bool(valor)
+        _escribir(datos)
+
+
+def modo_banner() -> bool:
+    """Versión de escritorio: ¿el avatar va como banner pequeño pegado al borde izquierdo? (False = círculo flotante)"""
+    return bool(_leer().get("modo_banner", True))
+
+
+def guardar_modo_banner(valor: bool):
+    with _lock:
+        datos = _leer()
+        datos["modo_banner"] = bool(valor)
+        _escribir(datos)
+
+
+def banner_retraido() -> bool:
+    """¿El banner está retraído (solo se ve la flecha en el borde)?"""
+    return bool(_leer().get("banner_retraido", False))
+
+
+def guardar_banner_retraido(valor: bool):
+    with _lock:
+        datos = _leer()
+        datos["banner_retraido"] = bool(valor)
+        _escribir(datos)
+
+
+def banner_y():
+    y = _leer().get("banner_y")
+    return int(y) if isinstance(y, (int, float)) else None
+
+
+def guardar_banner_y(y: int):
+    with _lock:
+        datos = _leer()
+        datos["banner_y"] = int(y)
+        _escribir(datos)
+
+
+def boton_chat_pos():
+    """Dónde dejaste el botón flotante del chat (ventana de prompt retraída)."""
+    pos = _leer().get("boton_chat_pos")
+    if isinstance(pos, list) and len(pos) == 2:
+        return int(pos[0]), int(pos[1])
+    return None
+
+
+def guardar_boton_chat_pos(x: int, y: int):
+    with _lock:
+        datos = _leer()
+        datos["boton_chat_pos"] = [int(x), int(y)]
+        _escribir(datos)
+
+
 def tema() -> str:
     """Tema de la interfaz de escritorio: 'oscuro' (por defecto) o 'claro'."""
     t = _leer().get("tema", "oscuro")

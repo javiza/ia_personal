@@ -6,7 +6,14 @@ que cambia de color y "respira" según lo que hace:
 - Insignia 🎙️: interruptor de voz. Apagada = solo escritura (no se abre el micrófono).
 - Avatar animado: un GIF por estado (assets/avatar_reposo|escuchando|pensando|hablando.gif; ver crear_avatar_gifs.py).
 - Arrastrar: mueve el icono (recuerda dónde lo dejaste).
-- Clic derecho: menú (hablar, ver ventanas, cambiar nombre, salir).
+- Clic derecho: menú (hablar, ver ventanas, cambiar nombre, esconder, salir).
+- Insignia «–» (arriba a la derecha) o menú: esconde el avatar y deja un icono en la bandeja del sistema (junto al reloj,
+  wifi, batería…). Clic en ese icono = mostrar/esconder; clic derecho = menú. Solo existe en la versión de escritorio.
+- Modo banner (por defecto en PC): el avatar es un banner pequeño pegado al borde izquierdo de la pantalla; se arrastra
+  solo en vertical y la flecha del costado (◀/▶) lo retrae contra el borde o lo vuelve a sacar. Clic derecho: alternar
+  con el modo flotante (círculo libre).
+- Ventana de prompt (chat): al iniciar, y al pulsar «➖ Retraer» o la X, se retrae y queda como un botón redondo 💬 que
+  se mueve libremente por la pantalla (se recuerda dónde lo dejaste). Clic en el botón = despliega el chat de nuevo.
 - Muestra lo que dices y lo que responde en una burbuja que se oculta sola.
 """
 import html
@@ -20,11 +27,12 @@ from string import Template
 if sys.platform.startswith("linux") and os.environ.get("XDG_SESSION_TYPE") == "wayland":
     os.environ.setdefault("QT_QPA_PLATFORM", "xcb")
 
-from PySide6.QtCore import QObject, QPoint, QPointF, QRectF, Qt, QTimer, QUrl, Signal
-from PySide6.QtGui import (QColor, QFont, QImageReader, QKeySequence, QMovie, QPainter, QPainterPath, QPen, QPixmap, QPolygonF,
-                           QRadialGradient, QShortcut)
+from PySide6.QtCore import QEasingCurve, QObject, QPoint, QPointF, QPropertyAnimation, QRectF, Qt, QTimer, QUrl, Signal
+from PySide6.QtGui import (QColor, QFont, QIcon, QImageReader, QKeySequence, QMovie, QPainter, QPainterPath, QPen, QPixmap,
+                           QPolygonF, QRadialGradient, QShortcut)
 from PySide6.QtWidgets import (QApplication, QCheckBox, QDialog, QFrame, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
-                               QFileDialog, QListWidget, QListWidgetItem, QMenu, QMessageBox, QPushButton, QTextBrowser, QVBoxLayout, QWidget)
+                               QFileDialog, QListWidget, QListWidgetItem, QMenu, QMessageBox, QPushButton, QSystemTrayIcon,
+                               QTextBrowser, QVBoxLayout, QWidget)
 
 import ajustes
 import config
@@ -88,10 +96,14 @@ class Burbuja(QWidget):
         self.resize(self.etiqueta.size())
         g = ancla.frameGeometry()
         pantalla = ancla.screen().availableGeometry()
-        x = min(max(pantalla.left() + 6, g.right() - self.width()), pantalla.right() - self.width() - 6)
-        y = g.top() - self.height() - 6
-        if y < pantalla.top() + 6:
-            y = g.bottom() + 6
+        if getattr(ancla, "banner", False):          # banner en el borde izquierdo: el globo sale a su derecha
+            x = g.right() + 6
+            y = min(max(pantalla.top() + 6, g.top()), pantalla.bottom() - self.height() - 6)
+        else:
+            x = min(max(pantalla.left() + 6, g.right() - self.width()), pantalla.right() - self.width() - 6)
+            y = g.top() - self.height() - 6
+            if y < pantalla.top() + 6:
+                y = g.bottom() + 6
         self.move(x, y)
         self.show()
         self.temporizador.start(int(segundos * 1000))
@@ -360,6 +372,97 @@ class DialogoHistorial(QDialog):
             self.filtrar("")
 
 
+class BotonChat(QWidget):
+    """Ventana de prompt retraída: un botón redondo y movible por toda la pantalla. Clic = desplegar el chat."""
+    LADO = 58
+
+    def __init__(self, chat: "Chat"):
+        super().__init__(None, Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
+        self.chat = chat
+        self.setWindowTitle("jarvis-boton-chat")
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setFixedSize(self.LADO, self.LADO)
+        self.setToolTip("Clic: abrir el chat · Arrastra para moverme")
+        self._arrastre = None
+        self._movido = False
+        self.reloj = QTimer(self, timeout=self.update)
+
+    def showEvent(self, e):
+        self.reloj.start(50)
+        super().showEvent(e)
+
+    def hideEvent(self, e):
+        self.reloj.stop()
+        super().hideEvent(e)
+
+    def _limitar(self, punto: QPoint) -> QPoint:
+        """Que el botón no se pierda fuera de la pantalla (la que tenga más cerca)."""
+        centro = punto + QPoint(self.width() // 2, self.height() // 2)
+        pantalla = (QApplication.screenAt(centro) or self.screen() or QApplication.primaryScreen()).availableGeometry()
+        x = min(max(punto.x(), pantalla.left()), pantalla.right() - self.width() + 1)
+        y = min(max(punto.y(), pantalla.top()), pantalla.bottom() - self.height() + 1)
+        return QPoint(x, y)
+
+    def colocar(self, preferida: QPoint = None):
+        guardada = ajustes.boton_chat_pos()
+        if guardada:
+            destino = QPoint(*guardada)
+        elif preferida is not None:
+            destino = preferida
+        else:
+            pantalla = QApplication.primaryScreen().availableGeometry()
+            destino = QPoint(pantalla.right() - self.width() - 24, pantalla.bottom() - self.height() - 24)
+        self.move(self._limitar(destino))
+
+    def paintEvent(self, _):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        color = COLORES.get(getattr(self.chat, "_estado_actual", "reposo"), COLORES["reposo"])
+        rect = QRectF(self.rect()).adjusted(4, 4, -4, -4)
+        fondo = QRadialGradient(rect.center(), rect.width() / 2)
+        fondo.setColorAt(0, QColor("#16294d")); fondo.setColorAt(1, QColor("#0b1222"))
+        p.setPen(Qt.NoPen); p.setBrush(fondo)
+        p.drawEllipse(rect)
+        aro = QPen(color, 3); aro.setCapStyle(Qt.RoundCap)
+        p.setPen(aro); p.setBrush(Qt.NoBrush)
+        if getattr(self.chat, "_estado_actual", "reposo") == "pensando":
+            giro = int(-self.chat.avatar.fase * 70 * 16)
+            p.drawArc(rect, giro, 110 * 16)
+            p.drawArc(rect, giro + 180 * 16, 110 * 16)
+        else:
+            p.drawEllipse(rect)
+        p.setPen(QColor("#eaf6ff")); p.setFont(QFont("Sans", 17))
+        p.drawText(QRectF(self.rect()), Qt.AlignCenter, "💬")
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.LeftButton:
+            self._arrastre = e.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            self._movido = False
+
+    def mouseMoveEvent(self, e):
+        if self._arrastre is not None and e.buttons() & Qt.LeftButton:
+            destino = self._limitar(e.globalPosition().toPoint() - self._arrastre)
+            if (destino - self.frameGeometry().topLeft()).manhattanLength() > 3:
+                self._movido = True
+            self.move(destino)
+
+    def mouseReleaseEvent(self, e):
+        if e.button() == Qt.LeftButton and self._arrastre is not None:
+            self._arrastre = None
+            if self._movido:
+                ajustes.guardar_boton_chat_pos(self.x(), self.y())
+            else:
+                self.chat.mostrar()
+
+    def contextMenuEvent(self, e):
+        menu = QMenu(self)
+        menu.addAction("💬  Abrir chat", self.chat.mostrar)
+        menu.addSeparator()
+        menu.addAction("Salir", self.chat.puente.salir.emit)
+        menu.exec(e.globalPos())
+
+
 class Chat(QWidget):
     """Ventana de chat: escribes (o hablas) y responde con el mismo cerebro. Recuerda todo lo que has pedido."""
 
@@ -375,6 +478,7 @@ class Chat(QWidget):
         self._estado_actual = "reposo"
         self._adjuntos = []                         # archivos adjuntos que aún no se envían (se ven como vista previa)
         self.setStyleSheet(estilo_chat(self.tema))
+        self.boton_flotante = BotonChat(self)       # lo que queda en pantalla cuando el chat se retrae
 
         # cabecera: la peliroja animada + estado + botones
         self.mini = MiniAvatar(avatar)
@@ -396,6 +500,10 @@ class Chat(QWidget):
         self.btn_tema = QPushButton()
         self.btn_tema.setObjectName("suave")
         self.btn_tema.setCursor(Qt.PointingHandCursor)
+        self.btn_retraer = QPushButton("➖ Retraer")
+        self.btn_retraer.setObjectName("suave")
+        self.btn_retraer.setToolTip("Convierte esta ventana en un botón que puedes mover por la pantalla")
+        self.btn_retraer.setCursor(Qt.PointingHandCursor)
         botones = QHBoxLayout()
         botones.addWidget(self.btn_voz)
         botones.addWidget(self.btn_hist)
@@ -403,6 +511,7 @@ class Chat(QWidget):
         botones2 = QHBoxLayout()
         botones2.addWidget(self.btn_limpiar)
         botones2.addWidget(self.btn_tema)
+        botones2.addWidget(self.btn_retraer)
         botones2.addStretch(1)
         textos = QVBoxLayout()
         textos.addWidget(self.titulo)
@@ -446,6 +555,7 @@ class Chat(QWidget):
         self.btn_hist.clicked.connect(self.abrir_historial)
         self.btn_limpiar.clicked.connect(self.limpiar_pantalla)
         self.btn_tema.clicked.connect(self.alternar_tema)
+        self.btn_retraer.clicked.connect(self.retraer)
         self.btn_adj.clicked.connect(self.adjuntar)
         self.leer.toggled.connect(ajustes.guardar_leer_respuestas)
         puente.mensaje.connect(self.agregar_externo)
@@ -663,13 +773,47 @@ class Chat(QWidget):
         self.setWindowTitle(f"Chat con {nombre}")
 
     def mostrar(self):
+        """Despliega el chat y esconde el botón flotante."""
         if not self.isVisible():
-            g = self.avatar.frameGeometry()
-            self.move(max(0, g.left() - self.width() - 12), max(0, g.bottom() - self.height()))
+            if self.boton_flotante.isVisible():          # se abre junto al botón, sin salirse de la pantalla
+                b = self.boton_flotante.frameGeometry()
+                pantalla = (QApplication.screenAt(b.center()) or QApplication.primaryScreen()).availableGeometry()
+                x = b.left() - self.width() - 8 if b.center().x() > pantalla.center().x() else b.right() + 8
+                y = b.bottom() - self.height() if b.center().y() > pantalla.center().y() else b.top()
+                self.move(min(max(x, pantalla.left()), pantalla.right() - self.width() + 1),
+                          min(max(y, pantalla.top()), pantalla.bottom() - self.height() + 1))
+            else:
+                g = self.avatar.frameGeometry()
+                if getattr(self.avatar, "banner", False):    # el chat se abre a la derecha del banner
+                    self.move(g.right() + 12, max(0, g.top()))
+                else:
+                    self.move(max(0, g.left() - self.width() - 12), max(0, g.bottom() - self.height()))
+        self.boton_flotante.hide()
         self.show()
         self.raise_()
         self.activateWindow()
         self.entrada.setFocus()
+
+    def retraer(self, *_):
+        """Esconde la ventana de prompt y deja un botón redondo, movible por toda la pantalla."""
+        preferida = None
+        if self.isVisible():                             # el botón aparece donde estaba la esquina del chat
+            g = self.frameGeometry()
+            preferida = QPoint(g.right() - self.boton_flotante.width(), g.top())
+        self.hide()
+        if not ajustes.boton_chat_pos() and preferida is not None:
+            self.boton_flotante.colocar(preferida)
+        else:
+            self.boton_flotante.colocar()
+        self.boton_flotante.show()
+        self.boton_flotante.raise_()
+
+    def closeEvent(self, e):
+        if e.spontaneous():                              # la X de la ventana: en vez de cerrar, se retrae a botón
+            e.ignore()
+            self.retraer()
+        else:
+            super().closeEvent(e)
 
 
 class Avatar(QWidget):
@@ -680,10 +824,11 @@ class Avatar(QWidget):
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setCursor(Qt.PointingHandCursor)
 
-        self.d = config.AVATAR_TAMANO
-        self.margen = 22
-        self.alto_nombre = 24
-        self.resize(self.d + 2 * self.margen, self.d + 2 * self.margen + self.alto_nombre)
+        self.banner = ajustes.modo_banner()          # banner pegado al borde izquierdo (o círculo flotante)
+        self.retraido = ajustes.banner_retraido()
+        self._anim = None
+        self._insignia_flecha = QRectF()
+        self._aplicar_modo()
 
         self.nombre = ajustes.obtener_nombre()
         self.estado = "reposo"
@@ -695,8 +840,11 @@ class Avatar(QWidget):
         self.chat = Chat(puente, self)
         self._insignia = QRectF()
         self._insignia_voz = QRectF()
+        self._insignia_ocultar = QRectF()
         self._arrastre = None
         self._movido = False
+        self.bandeja = None
+        self._crear_bandeja()
 
         self.reloj = QTimer(self, timeout=self._animar)
         self.reloj.start(33)
@@ -708,8 +856,91 @@ class Avatar(QWidget):
         puente.voz_modo.connect(self.set_voz)
         self._activar_animacion()
 
-        self._posicionar()
+        self._colocar()
+        if self.bandeja is not None and ajustes.avatar_oculto():
+            self.bandeja.show()               # arrancó escondido: solo el icono de la bandeja
+        else:
+            self.show()
+        self.chat.retraer()                   # al arrancar, la ventana de prompt ya está retraída como botón movible
+
+    # ---------------------------------------------------------- bandeja del sistema (solo versión de PC)
+    def _icono_bandeja(self) -> QIcon:
+        """El avatar recortado en círculo, para el icono junto al reloj / wifi / batería."""
+        lado = 128
+        pm = QPixmap(lado, lado)
+        pm.fill(Qt.transparent)
+        p = QPainter(pm)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setRenderHint(QPainter.SmoothPixmapTransform)
+        camino = QPainterPath()
+        camino.addEllipse(QRectF(4, 4, lado - 8, lado - 8))
+        p.setClipPath(camino)
+        img = self.foto
+        p.drawPixmap(QRectF(4, 4, lado - 8, lado - 8), img, QRectF(img.rect()))
+        p.setClipping(False)
+        p.setPen(QPen(COLORES["reposo"], 6)); p.setBrush(Qt.NoBrush)
+        p.drawEllipse(QRectF(5, 5, lado - 10, lado - 10))
+        p.end()
+        return QIcon(pm)
+
+    def _crear_bandeja(self):
+        """Icono en la bandeja del sistema. Si el sistema no tiene bandeja, no se ofrece esconder (para no perderla)."""
+        if not QSystemTrayIcon.isSystemTrayAvailable():
+            return
+        self.bandeja = QSystemTrayIcon(self._icono_bandeja(), self)
+        self.bandeja.setToolTip(self.nombre)
+        menu = QMenu()
+        self._accion_alternar = menu.addAction("", self.alternar_visibilidad)
+        menu.addAction("💬  Escribir…", self._abrir_chat_desde_bandeja)
+        menu.addAction("🎙️  Hablar ahora", self._hablar_ahora)
+        menu.addSeparator()
+        menu.addAction("Salir", self.puente.salir.emit)
+        menu.aboutToShow.connect(self._texto_accion_alternar)
+        self._menu_bandeja = menu                      # Qt no lo conserva solo
+        self.bandeja.setContextMenu(menu)
+        self.bandeja.activated.connect(self._clic_bandeja)
+        QApplication.instance().aboutToQuit.connect(self.bandeja.hide)   # que no quede un icono fantasma al salir
+        self._texto_accion_alternar()
+
+    def _texto_accion_alternar(self):
+        self._accion_alternar.setText("👁  Mostrar avatar" if not self.isVisible() else "🫥  Esconder avatar")
+
+    def _clic_bandeja(self, motivo):
+        if motivo in (QSystemTrayIcon.Trigger, QSystemTrayIcon.DoubleClick):    # clic izquierdo: mostrar / esconder
+            self.alternar_visibilidad()
+
+    def _abrir_chat_desde_bandeja(self):
+        self.puente.abrir_chat.emit()
+
+    def alternar_visibilidad(self):
+        if self.isVisible():
+            self.esconder()
+        else:
+            self.mostrar_avatar()
+
+    def esconder(self):
+        """Quita el avatar del escritorio; queda el icono en la bandeja (el asistente sigue funcionando)."""
+        if self.bandeja is None:
+            return
+        self.burbuja.hide()
+        self.bandeja.show()
+        self.hide()
+        ajustes.guardar_avatar_oculto(True)
+        self._texto_accion_alternar()
+        if not getattr(self, "_aviso_bandeja", False):             # solo la primera vez, para que sepa dónde quedó
+            self._aviso_bandeja = True
+            self.bandeja.showMessage(self.nombre, "Sigo aquí, en la bandeja del sistema. Clic en mi icono para mostrarme.",
+                                     QSystemTrayIcon.Information, 4000)
+
+    def mostrar_avatar(self):
+        if self.banner and self.retraido:            # al mostrarlo desde la bandeja sale desplegado
+            self.retraido = False
+            ajustes.guardar_banner_retraido(False)
+        self._colocar()
         self.show()
+        self.raise_()
+        ajustes.guardar_avatar_oculto(False)
+        self._texto_accion_alternar()
 
     # ---------------------------------------------------------- preparación
     def _cargar_foto(self) -> QPixmap:
@@ -724,7 +955,7 @@ class Avatar(QWidget):
             p.setPen(QColor("#5ee7ff")); p.setFont(QFont("Sans", 200, QFont.Bold))
             p.drawText(QRectF(0, 0, 512, 512), Qt.AlignCenter, self.nombre[:1].upper())
             p.end()
-        return pm.scaled(self.d * 2, self.d * 2, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        return pm.scaled(config.AVATAR_TAMANO * 2, config.AVATAR_TAMANO * 2, Qt.KeepAspectRatio, Qt.SmoothTransformation)
 
     def _cargar_animaciones(self) -> dict:
         """
@@ -769,6 +1000,65 @@ class Avatar(QWidget):
                 return pm
         return self.foto
 
+    # ---------------------------------------------------------- modo banner (borde izquierdo) / flotante
+    def _aplicar_modo(self):
+        if self.banner:
+            self.d, self.margen, self.alto_nombre, self.asa = 64, 8, 0, 20     # asa = franja de la flecha
+            self.k = 0.62                                                      # escala de las insignias
+            self.setToolTip(ajustes.obtener_nombre())
+        else:
+            self.d, self.margen, self.alto_nombre, self.asa = config.AVATAR_TAMANO, 22, 24, 0
+            self.k = 1.0
+            self.setToolTip("")
+        self.resize(self.d + 2 * self.margen + self.asa, self.d + 2 * self.margen + self.alto_nombre)
+
+    def _pantalla(self):
+        return (self.screen() or QApplication.primaryScreen()).availableGeometry()
+
+    def _colocar(self, animar: bool = False):
+        """Banner: pegado al borde izquierdo (retraído = solo asoma la flecha); solo se mueve en vertical. Flotante: libre."""
+        if not self.banner:
+            self._posicionar()
+            return
+        g = self._pantalla()
+        y = ajustes.banner_y()
+        if y is None:
+            y = g.top() + (g.height() - self.height()) // 2
+        y = min(max(y, g.top()), g.bottom() - self.height())
+        x = g.left() - ((self.width() - self.asa) if self.retraido else 0)
+        destino = QPoint(x, y)
+        if animar and self.isVisible():
+            anim = QPropertyAnimation(self, b"pos", self)
+            anim.setDuration(220)
+            anim.setEasingCurve(QEasingCurve.OutCubic)
+            anim.setStartValue(self.pos())
+            anim.setEndValue(destino)
+            anim.start()
+            self._anim = anim
+        else:
+            self.move(destino)
+
+    def alternar_retraido(self):
+        """Flecha del banner: lo esconde contra el borde (queda solo la flecha) o lo vuelve a sacar."""
+        if not self.banner:
+            return
+        self.retraido = not self.retraido
+        ajustes.guardar_banner_retraido(self.retraido)
+        self.burbuja.hide()
+        self._colocar(animar=True)
+        self.update()
+
+    def alternar_modo(self):
+        """Cambia entre banner en el borde y círculo flotante (menú clic derecho)."""
+        self.banner = not self.banner
+        ajustes.guardar_modo_banner(self.banner)
+        self.retraido = False
+        ajustes.guardar_banner_retraido(False)
+        self.burbuja.hide()
+        self._aplicar_modo()
+        self._colocar()
+        self.update()
+
     def _posicionar(self):
         guardada = ajustes.obtener_posicion()
         pantalla = QApplication.primaryScreen().availableGeometry()
@@ -796,11 +1086,15 @@ class Avatar(QWidget):
 
     def set_nombre(self, nombre: str):
         self.nombre = nombre
+        if self.bandeja is not None:
+            self.bandeja.setToolTip(nombre)
+        if self.banner:
+            self.setToolTip(nombre)
         self.update()
 
     def mostrar_mensaje(self, quien: str, texto: str):
         texto = (texto or "").strip()
-        if not texto or self.chat.isVisible():
+        if not texto or self.chat.isVisible() or not self.isVisible() or (self.banner and self.retraido):
             return
         seguro = texto.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         if len(seguro) > 420:
@@ -819,9 +1113,14 @@ class Avatar(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         p.setRenderHint(QPainter.SmoothPixmapTransform)
-        cx, cy = self.width() / 2, self.margen + self.d / 2
+        cx, cy = ((self.margen + self.d / 2) if self.banner else self.width() / 2), self.margen + self.d / 2
         r = self.d / 2
         color = COLORES[self.estado]
+        k = self.k
+        if self.banner:
+            # fondo del banner: pegado al borde izquierdo (esquinas izquierdas fuera de pantalla), redondeado a la derecha
+            p.setPen(QPen(color, 1.5)); p.setBrush(QColor(10, 16, 32, 235))
+            p.drawRoundedRect(QRectF(-14, 0.75, self.width() + 13.25, self.height() - 1.5), 14, 14)
 
         # respiración / pulso según estado
         if self.estado == "hablando":
@@ -834,14 +1133,15 @@ class Avatar(QWidget):
             pulso = 0.5 + 0.5 * math.sin(self.fase * 0.5)
             escala = 1.0 + 0.012 * pulso
 
-        # halo de luz
-        halo = QRadialGradient(cx, cy, r + self.margen)
-        c1, c2 = QColor(color), QColor(color)
-        c1.setAlpha(int(70 + 90 * pulso)); c2.setAlpha(0)
-        halo.setColorAt(0.70, c1); halo.setColorAt(1.0, c2)
-        p.setPen(Qt.NoPen); p.setBrush(halo)
-        p.drawEllipse(QRectF(cx - r - self.margen, cy - r - self.margen,
-                             2 * (r + self.margen), 2 * (r + self.margen)))
+        # halo de luz (en el banner no: es compacto)
+        if not self.banner:
+            halo = QRadialGradient(cx, cy, r + self.margen)
+            c1, c2 = QColor(color), QColor(color)
+            c1.setAlpha(int(70 + 90 * pulso)); c2.setAlpha(0)
+            halo.setColorAt(0.70, c1); halo.setColorAt(1.0, c2)
+            p.setPen(Qt.NoPen); p.setBrush(halo)
+            p.drawEllipse(QRectF(cx - r - self.margen, cy - r - self.margen,
+                                 2 * (r + self.margen), 2 * (r + self.margen)))
 
         # foto recortada en círculo
         rr = r * escala
@@ -872,44 +1172,74 @@ class Avatar(QWidget):
         else:
             p.drawEllipse(rect_aro)
 
-        # nombre
-        p.setFont(QFont("Sans", 9, QFont.DemiBold))
-        texto = self.nombre
-        ancho = p.fontMetrics().horizontalAdvance(texto) + 18
-        pill = QRectF(cx - ancho / 2, self.margen + self.d + 4, ancho, 18)
-        fondo = QColor(10, 16, 32, 215)
-        p.setPen(Qt.NoPen); p.setBrush(fondo)
-        p.drawRoundedRect(pill, 9, 9)
-        p.setPen(QColor("#eaf6ff"))
-        p.drawText(pill, Qt.AlignCenter, texto)
+        # nombre (solo en el modo flotante)
+        if not self.banner:
+            p.setFont(QFont("Sans", 9, QFont.DemiBold))
+            texto = self.nombre
+            ancho = p.fontMetrics().horizontalAdvance(texto) + 18
+            pill = QRectF(cx - ancho / 2, self.margen + self.d + 4, ancho, 18)
+            fondo = QColor(10, 16, 32, 215)
+            p.setPen(Qt.NoPen); p.setBrush(fondo)
+            p.drawRoundedRect(pill, 9, 9)
+            p.setPen(QColor("#eaf6ff"))
+            p.drawText(pill, Qt.AlignCenter, texto)
 
-        # insignia 💬: abre el chat de texto
+        # insignia 💬: abre el chat de texto (se dibuja centrada en el origen y escalada por k)
         bx, by = cx + r * 0.74, cy + r * 0.74
-        self._insignia = QRectF(bx - 14, by - 14, 28, 28)
+        self._insignia = QRectF(bx - 14 * k, by - 14 * k, 28 * k, 28 * k)
+        p.save(); p.translate(bx, by); p.scale(k, k)
         p.setBrush(QColor(10, 16, 32, 240)); p.setPen(QPen(color, 2))
-        p.drawEllipse(self._insignia)
+        p.drawEllipse(QRectF(-14, -14, 28, 28))
         p.setPen(Qt.NoPen); p.setBrush(QColor("#eaf6ff"))
-        p.drawRoundedRect(QRectF(bx - 8, by - 7, 16, 11), 3, 3)
-        p.drawPolygon(QPolygonF([QPointF(bx - 4, by + 3), QPointF(bx - 7, by + 8), QPointF(bx + 2, by + 3)]))
+        p.drawRoundedRect(QRectF(-8, -7, 16, 11), 3, 3)
+        p.drawPolygon(QPolygonF([QPointF(-4, 3), QPointF(-7, 8), QPointF(2, 3)]))
         p.setBrush(color)
         for dx in (-4, 0, 4):
-            p.drawEllipse(QPointF(bx + dx, by - 1.5), 1.2, 1.2)
+            p.drawEllipse(QPointF(dx, -1.5), 1.2, 1.2)
+        p.restore()
 
         # insignia 🎙️: interruptor de voz (verde = te escucha · roja tachada = solo escritura)
         mx, my = cx - r * 0.74, cy + r * 0.74
-        self._insignia_voz = QRectF(mx - 14, my - 14, 28, 28)
+        self._insignia_voz = QRectF(mx - 14 * k, my - 14 * k, 28 * k, 28 * k)
         tinta = QColor("#4ade80") if self.voz else QColor("#ff6b81")
+        p.save(); p.translate(mx, my); p.scale(k, k)
         p.setBrush(QColor(10, 16, 32, 240)); p.setPen(QPen(tinta, 2))
-        p.drawEllipse(self._insignia_voz)
+        p.drawEllipse(QRectF(-14, -14, 28, 28))
         p.setPen(Qt.NoPen); p.setBrush(QColor("#eaf6ff"))
-        p.drawRoundedRect(QRectF(mx - 3, my - 9, 6, 11), 3, 3)           # cuerpo del micrófono
+        p.drawRoundedRect(QRectF(-3, -9, 6, 11), 3, 3)                   # cuerpo del micrófono
         p.setBrush(Qt.NoBrush); p.setPen(QPen(QColor("#eaf6ff"), 1.6))
-        p.drawArc(QRectF(mx - 6, my - 6, 12, 11), 180 * 16, 180 * 16)     # soporte
-        p.drawLine(QPointF(mx, my + 5), QPointF(mx, my + 8))
-        p.drawLine(QPointF(mx - 3, my + 8), QPointF(mx + 3, my + 8))
+        p.drawArc(QRectF(-6, -6, 12, 11), 180 * 16, 180 * 16)             # soporte
+        p.drawLine(QPointF(0, 5), QPointF(0, 8))
+        p.drawLine(QPointF(-3, 8), QPointF(3, 8))
         if not self.voz:
             p.setPen(QPen(tinta, 2.4, Qt.SolidLine, Qt.RoundCap))
-            p.drawLine(QPointF(mx - 8, my - 8), QPointF(mx + 8, my + 8))
+            p.drawLine(QPointF(-8, -8), QPointF(8, 8))
+        p.restore()
+
+        # insignia «–»: esconder el avatar a la bandeja del sistema (solo si el sistema tiene bandeja)
+        if self.bandeja is not None:
+            hx, hy = cx + r * 0.74, cy - r * 0.74
+            self._insignia_ocultar = QRectF(hx - 11 * k, hy - 11 * k, 22 * k, 22 * k)
+            p.save(); p.translate(hx, hy); p.scale(k, k)
+            p.setBrush(QColor(10, 16, 32, 240)); p.setPen(QPen(color, 2))
+            p.drawEllipse(QRectF(-11, -11, 22, 22))
+            p.setPen(QPen(QColor("#eaf6ff"), 2, Qt.SolidLine, Qt.RoundCap))
+            p.drawLine(QPointF(-5, 0), QPointF(5, 0))
+            p.restore()
+
+        # flecha del banner: ◀ retrae contra el borde · ▶ lo vuelve a sacar
+        if self.banner:
+            self._insignia_flecha = QRectF(self.width() - self.asa, 0, self.asa, self.height())
+            ax, ay = self._insignia_flecha.center().x(), self._insignia_flecha.center().y()
+            if not self.retraido:
+                p.setPen(QPen(QColor(color.red(), color.green(), color.blue(), 90), 1))
+                p.drawLine(QPointF(self._insignia_flecha.left(), 10), QPointF(self._insignia_flecha.left(), self.height() - 10))
+            sentido = 1 if self.retraido else -1                  # ▶ si está retraído, ◀ si está desplegado
+            p.setPen(QPen(color, 2.6, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)); p.setBrush(Qt.NoBrush)
+            p.drawPolyline(QPolygonF([QPointF(ax - 3 * sentido, ay - 7), QPointF(ax + 3 * sentido, ay),
+                                      QPointF(ax - 3 * sentido, ay + 7)]))
+        else:
+            self._insignia_flecha = QRectF()
 
     # ---------------------------------------------------------------- ratón
     def mousePressEvent(self, e):
@@ -920,6 +1250,9 @@ class Avatar(QWidget):
     def mouseMoveEvent(self, e):
         if self._arrastre is not None and e.buttons() & Qt.LeftButton:
             destino = e.globalPosition().toPoint() - self._arrastre
+            if self.banner:                            # el banner solo se desliza en vertical por el borde
+                g = self._pantalla()
+                destino = QPoint(self.x(), min(max(destino.y(), g.top()), g.bottom() - self.height()))
             if (destino - self.frameGeometry().topLeft()).manhattanLength() > 3:
                 self._movido = True
             self.move(destino)
@@ -929,7 +1262,14 @@ class Avatar(QWidget):
     def mouseReleaseEvent(self, e):
         if e.button() == Qt.LeftButton and self._arrastre is not None:
             if self._movido:
-                ajustes.guardar_posicion(self.x(), self.y())
+                if self.banner:
+                    ajustes.guardar_banner_y(self.y())
+                else:
+                    ajustes.guardar_posicion(self.x(), self.y())
+            elif self.banner and self._insignia_flecha.contains(e.position()):
+                self.alternar_retraido()
+            elif self.bandeja is not None and self._insignia_ocultar.contains(e.position()):
+                self.esconder()
             elif self._insignia.contains(e.position()):
                 self.puente.abrir_chat.emit()
             elif self._insignia_voz.contains(e.position()):
@@ -950,6 +1290,10 @@ class Avatar(QWidget):
         menu.addAction("💬  Escribir…", self.puente.abrir_chat.emit)
         menu.addAction("🪟  ¿Qué ventanas tengo abiertas?", self.puente.ver_ventanas.emit)
         menu.addAction("✏️  Cambiar nombre…", self._pedir_nombre)
+        menu.addAction("🪟  Modo flotante (círculo libre)" if self.banner else "📌  Modo banner (borde izquierdo)",
+                       self.alternar_modo)
+        if self.bandeja is not None:
+            menu.addAction("🫥  Esconder en la bandeja del sistema", self.esconder)
         menu.addSeparator()
         menu.addAction("Salir", self.puente.salir.emit)
         menu.exec(e.globalPos())

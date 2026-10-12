@@ -9,6 +9,7 @@ Herramientas que la asistente puede usar durante la conversación.
   Fotos ........ inspeccionar_imagen, analizar_imagen, editar_imagen
   Pantalla ..... ver_ventanas, ver_pantalla
   Memoria ...... guardar_instruccion, guardar_recuerdo, olvidar_recuerdo, ver_memoria, buscar_en_historial
+  Papelera ..... eliminar_archivo (a la papelera del SISTEMA), ver_papelera, restaurar_archivo, eliminar_definitivo
   Identidad .... cambiar_nombre_asistente
 
 SEGURIDAD: todo acceso a disco pasa por rutas.resolver_ruta(), que solo permite las
@@ -247,6 +248,345 @@ def obtener_clima(ciudad: str) -> str:
                 f"viento de {c['wind_speed_10m']} km/h.")
     except Exception as e:
         return f"No pude obtener el clima ahora mismo: {e}"
+
+
+# --------------------------------------------------------------- borrar + papelera del SISTEMA (doble confirmación)
+import re as _re
+import time as _time
+
+import papelera as _pap
+
+_PROTEGIDOS = {".env", "memoria.sqlite3", "ajustes.json"}
+_PARTES_PROTEGIDAS = {".git", ".venv", "venv", "node_modules"}
+_SI = _re.compile(r"\b(s[ií]|sip|dale|ok|okey|vale|confirmo|confirmado|adelante|claro|hazlo|b[oó]rra\w*|elimin\w*)\b",
+                  _re.I)
+_NO = _re.compile(r"\b(no|nunca|cancel\w*|deja\w*|espera\w*|alto)\b", _re.I)
+_VIGENCIA = 600                                   # s que dura una vista previa esperando el «sí»
+_TURNOS_PAPELERA = 4                              # tras hablar de la papelera, sus herramientas siguen disponibles N turnos
+_turno = {"n": 0, "texto": ""}
+_pendiente = {"accion": "", "claves": [], "turno": -1, "t": 0.0}
+_papelera_hasta = {"turno": -1}
+_ultimo_listado = []                              # lo último que se mostró: los «números» del usuario apuntan aquí
+
+TOOLS += [
+    _t("eliminar_archivo",
+       "Manda archivos o CARPETAS a la PAPELERA DEL SISTEMA (la misma del explorador de archivos; se pueden restaurar). "
+       "Va en DOS pasos: 1) llámala con las rutas, SIN confirmado, y te dirá qué se enviaría; 2) cuéntaselo al usuario, "
+       "pregúntale si confirma y espera su respuesta; solo si en su siguiente mensaje dice que sí, llámala otra vez con "
+       "las mismas rutas y confirmado=true. No toca archivos de claves o datos del programa ni las carpetas base.",
+       {"rutas": {"type": "array", "items": _S,
+                  "description": "Rutas de archivos o carpetas, ej: ['Escritorio/proyectos/viejo', 'Descargas/foto.png']"},
+        "confirmado": {"type": "boolean",
+                       "description": "true SOLO después de que el usuario confirmó en su mensaje anterior."}},
+       ["rutas"]),
+    _t("ver_papelera",
+       "Muestra lo que hay en la PAPELERA DEL SISTEMA (archivos y carpetas, con número, tamaño, fecha y de dónde venían). "
+       "Úsala siempre que pidan ver, revisar o buscar algo en la papelera.",
+       {"buscar": {**_S, "description": "Opcional: texto para filtrar por nombre o ruta."}}),
+    _t("restaurar_archivo",
+       "Devuelve un archivo o carpeta de la papelera del sistema a su lugar original. Identifícalo con 'nombre' (o parte) "
+       "o con 'numeros' (los de ver_papelera). No pisa nada: si ya existe algo igual, lo deja con «_restaurado».",
+       {"nombre": {**_S, "description": "Nombre (o parte) de lo que hay que recuperar."},
+        "numeros": {"type": "array", "items": _N, "description": "Números según la última lista de ver_papelera."}}),
+    _t("eliminar_definitivo",
+       "Borra PARA SIEMPRE (sin poder recuperar) algo que ya está en la papelera del sistema, o vacía la papelera entera con "
+       "vaciar_todo=true. Va en DOS pasos como eliminar_archivo: primero SIN confirmado (te dirá qué se perdería), avísale al "
+       "usuario que es IRREVERSIBLE, espera su respuesta y solo si dice que sí vuelve a llamarla con confirmado=true.",
+       {"nombre": {**_S, "description": "Nombre (o parte) de lo que hay que borrar para siempre."},
+        "numeros": {"type": "array", "items": _N, "description": "Números según la última lista de ver_papelera."},
+        "vaciar_todo": {"type": "boolean", "description": "true para vaciar TODA la papelera."},
+        "confirmado": {"type": "boolean",
+                       "description": "true SOLO después de que el usuario confirmó en su mensaje anterior."}}),
+]
+
+
+def nuevo_turno(texto: str):
+    """llm.preguntar() lo llama una vez por cada mensaje del usuario: así sabemos si el «sí» llegó en OTRO turno."""
+    _turno["n"] += 1
+    _turno["texto"] = texto or ""
+
+
+def _borrado_pendiente() -> bool:
+    return bool(_pendiente["claves"]) and _time.time() - _pendiente["t"] < _VIGENCIA
+
+
+def _tam(n) -> str:
+    for unidad, f in (("GB", 1 << 30), ("MB", 1 << 20), ("KB", 1 << 10)):
+        if n >= f:
+            return f"{n / f:.1f} {unidad}" if unidad != "KB" else f"{n / f:.0f} KB"
+    return f"{n} B"
+
+
+def _confirmacion(accion, claves, confirmado):
+    """
+    (True, "") si el usuario YA confirmó esta acción sobre estas cosas, en un mensaje posterior a la vista previa.
+    Si no, (False, texto): texto != None es un rechazo; texto == None significa «queda registrada la vista previa».
+    """
+    if confirmado and _borrado_pendiente():
+        if _pendiente["turno"] == _turno["n"]:
+            return False, ("No hice nada: la confirmación tiene que venir del usuario en su SIGUIENTE mensaje. "
+                           "Pregúntale si confirma y espera su respuesta.")
+        if _NO.search(_turno["texto"]) or not _SI.search(_turno["texto"]):
+            return False, ("No hice nada: el usuario no confirmó con claridad. Pídele que diga «sí» "
+                           "o dile que cancelaste.")
+        if _pendiente["accion"] == accion and all(c in _pendiente["claves"] for c in claves):
+            return True, ""
+    _pendiente.update(accion=accion, claves=list(claves), turno=_turno["n"], t=_time.time())
+    return False, None
+
+
+def _limpiar_pendiente():
+    _pendiente.update(accion="", claves=[], turno=-1, t=0.0)
+
+
+def _motivo_protegido(destino):
+    real = os.path.realpath(destino)
+    if os.path.basename(real) in _PROTEGIDOS:
+        return "es un archivo de claves o datos del programa"
+    if set(real.replace("\\", "/").split("/")) & _PARTES_PROTEGIDAS:
+        return "está dentro de una carpeta interna del proyecto (.git, venv...) o es una de ellas"
+    respaldos = os.path.realpath(config.CARPETA_RESPALDOS)
+    if real == respaldos or real.startswith(respaldos + os.sep):
+        return "está en los respaldos automáticos"
+    if os.path.dirname(real) == os.path.realpath(config.BASE_DIR) and real.lower().endswith(".py"):
+        return "es código del propio programa"
+    if os.path.isdir(real):
+        # una carpeta no puede ser una base (Escritorio, Documentos...) ni contener al propio programa
+        bases = {os.path.realpath(os.path.expanduser("~"))} | {os.path.realpath(d) for d in config.ALLOWED_DIRS}
+        if real in bases:
+            return "es una carpeta base (no borro Escritorio, Documentos, etc., solo lo que hay dentro)"
+        for propio in (config.BASE_DIR, config.OUTPUT_DIR):
+            propio = os.path.realpath(propio)
+            if propio == real or propio.startswith(real + os.sep):
+                return "contiene el programa o su carpeta de archivos"
+    return None
+
+
+def _lista_rutas(valor):
+    if isinstance(valor, (list, tuple)):
+        return [str(x).strip() for x in valor if str(x).strip()]
+    valor = str(valor or "").strip()
+    if not valor:
+        return []
+    if rutas.resolver_ruta(valor) and os.path.lexists(rutas.resolver_ruta(valor)):
+        return [valor]
+    return [x.strip() for x in _re.split(r"[;,\n]", valor) if x.strip()]
+
+
+# ---- 1) mandar a la papelera del sistema
+def eliminar_archivo(lista, confirmado=False, carpeta="") -> str:
+    items, problemas = [], []
+    for r in _lista_rutas(lista):
+        destino = rutas.resolver_ruta(_ubicar(r, carpeta))
+        if destino is None:
+            problemas.append(f"{r}: no tengo permiso para esa ruta")
+        elif not os.path.lexists(destino):
+            problemas.append(f"{r}: no existe")
+        elif _motivo_protegido(destino):
+            problemas.append(f"{r}: no lo borro porque {_motivo_protegido(destino)}")
+        else:
+            items.append(destino)
+    items = list(dict.fromkeys(items))
+    items = [d for d in items if not any(o != d and d.startswith(o + os.sep) for o in items)]   # sin repetir lo que va dentro de una carpeta
+    if not items:
+        return "No borré nada. " + ("; ".join(problemas) if problemas else "No me dijiste qué archivo.")
+
+    ok, texto = _confirmacion("papelera", items, confirmado)
+    if ok:
+        return _a_papelera(items, problemas)
+    if texto:
+        return texto
+    listado = ", ".join(_descripcion_ruta(d) for d in items)
+    return ("VISTA PREVIA: todavía NO se borró nada. Se enviarían a la papelera del sistema (se pueden restaurar): "
+            + listado
+            + (". No se pueden borrar: " + "; ".join(problemas) if problemas else "")
+            + ". Díselo al usuario, pregúntale si confirma y ESPERA su respuesta; no vuelvas a llamar a esta "
+              "herramienta hasta que conteste.")
+
+
+def _descripcion_ruta(d):
+    if os.path.isdir(d) and not os.path.islink(d):
+        tam, aprox = _pap.medir(d)
+        return f"{_mostrar(d)} (carpeta, {'más de ' if aprox else ''}{_tam(tam)})"
+    try:
+        return f"{_mostrar(d)} ({_tam(os.lstat(d).st_size)})"
+    except OSError:
+        return _mostrar(d)
+
+
+def _a_papelera(items, problemas):
+    hechos, fallos = [], []
+    for d in items:
+        try:
+            _pap.enviar(d)
+            hechos.append(os.path.basename(d))
+        except Exception as e:
+            fallos.append(f"{os.path.basename(d)}: {e}")
+    _limpiar_pendiente()
+    _papelera_hasta["turno"] = _turno["n"] + _TURNOS_PAPELERA
+    partes = []
+    if hechos:
+        partes.append("Listo, lo envié a la papelera del sistema (verificado): " + ", ".join(hechos)
+                      + ". Si te arrepientes, dime «restaura» + el nombre.")
+    if fallos or problemas:
+        partes.append("Con problemas: " + "; ".join(fallos + problemas))
+    return " ".join(partes)
+
+
+# ---- 2) ver la papelera
+def _linea_entrada(i, e):
+    fecha = f", borrado {e.fecha:%d-%m-%Y %H:%M}" if e.fecha else ""
+    donde = f", estaba en {os.path.dirname(e.origen)}" if e.origen else ""
+    tipo = "carpeta, " if e.es_carpeta else ""
+    return f"{i}. {e.nombre}{'/' if e.es_carpeta else ''} ({tipo}{'más de ' if e.aprox else ''}{_tam(e.tamano)}{fecha}{donde})"
+
+
+def ver_papelera(buscar: str = "") -> str:
+    if not _pap.puede_listar():
+        return _pap.aviso_no_soportado("ver la papelera")
+    try:
+        entradas = _pap.listar()
+    except (PermissionError, NotImplementedError) as e:
+        return str(e)
+    buscar = (buscar or "").strip().lower()
+    if buscar:
+        entradas = [e for e in entradas if buscar in e.nombre.lower() or buscar in (e.origen or "").lower()]
+    _ultimo_listado[:] = entradas
+    _papelera_hasta["turno"] = _turno["n"] + _TURNOS_PAPELERA
+    if not entradas:
+        return f"No hay nada parecido a «{buscar}» en la papelera." if buscar else "La papelera está vacía."
+    total = sum(e.tamano for e in entradas)
+    lineas, largo = [], 0
+    for i, e in enumerate(entradas, 1):                     # el resultado a la IA tiene tope de texto: se corta ordenadamente
+        l = _linea_entrada(i, e)
+        if largo + len(l) > config.MAX_CHARS_RESULTADO_TOOL - 400:
+            lineas.append(f"... y {len(entradas) - i + 1} más (pide una búsqueda por nombre para verlos).")
+            break
+        lineas.append(l)
+        largo += len(l) + 1
+    cab = f"En la papelera hay {len(entradas)} elemento(s), unos {_tam(total)} en total (lo más reciente primero):"
+    return cab + "\n" + "\n".join(lineas)
+
+
+# ---- elegir entradas por nombre o por número
+def _elegir_entradas(nombre, numeros, un_solo_resultado):
+    """-> (entradas, mensaje_de_error). Con un nombre ambiguo no adivina: muestra las opciones numeradas."""
+    todas = _pap.listar()
+    if numeros:
+        if isinstance(numeros, (int, float)):
+            numeros = [numeros]
+        if not _ultimo_listado:
+            return [], "Primero muestra la papelera con ver_papelera para saber los números."
+        vivas = {e.id: e for e in todas}
+        elegidas = []
+        for n in numeros:
+            try:
+                n = int(n)
+                if not 1 <= n <= len(_ultimo_listado):
+                    raise ValueError
+            except (TypeError, ValueError):
+                return [], f"El número «{n}» no está en la lista. Muestra la papelera otra vez con ver_papelera."
+            viva = vivas.get(_ultimo_listado[n - 1].id)
+            if not viva:
+                return [], (f"«{_ultimo_listado[n - 1].nombre}» ya no está en la papelera (la lista cambió). "
+                            "Llama a ver_papelera otra vez.")
+            if viva not in elegidas:
+                elegidas.append(viva)
+        return elegidas, None
+    nombre = (nombre or "").strip().lower()
+    if not nombre:
+        return [], "Dime cuál: un nombre, o los números que salen en ver_papelera."
+    coinciden = [e for e in todas if nombre in e.nombre.lower() or nombre in (e.origen or "").lower()]
+    if not coinciden:
+        return [], f"No hay nada parecido a «{nombre}» en la papelera."
+    if len(coinciden) == 1 or (un_solo_resultado and len({e.nombre for e in coinciden}) == 1):
+        return coinciden[:1], None                           # mismo nombre varias veces: el borrado más reciente
+    _ultimo_listado[:] = coinciden
+    return [], ("Hay varias coincidencias, no quiero adivinar. Pregúntale al usuario cuál (o cuáles):\n"
+                + "\n".join(_linea_entrada(i, e) for i, e in enumerate(coinciden[:15], 1))
+                + "\nLuego vuelve a llamar con 'numeros'.")
+
+
+# ---- 3) restaurar
+def restaurar_archivo(nombre: str = "", numeros=None) -> str:
+    if not _pap.puede_listar():
+        return _pap.aviso_no_soportado("restaurar")
+    if not _pap.puede_restaurar():
+        return _pap.aviso_no_soportado("restaurar")
+    if not (nombre or "").strip() and not numeros:
+        return ver_papelera()
+    try:
+        entradas, error = _elegir_entradas(nombre, numeros, un_solo_resultado=True)
+    except (PermissionError, NotImplementedError) as e:
+        return str(e)
+    if error:
+        return error
+    hechos, fallos = [], []
+    for e in entradas:
+        if not e.origen:
+            fallos.append(f"{e.nombre}: la papelera no guardó de dónde venía")
+        elif not rutas._dentro_de_permitidos(e.origen):
+            fallos.append(f"{e.nombre}: su carpeta original ({os.path.dirname(e.origen)}) no está entre las permitidas")
+        else:
+            try:
+                destino = _pap.restaurar(e)
+                hechos.append(f"{_mostrar(destino)} (verificado: {os.path.lexists(destino)})")
+            except Exception as ex:
+                fallos.append(f"{e.nombre}: {ex}")
+    partes = []
+    if hechos:
+        partes.append("Restaurado en: " + ", ".join(hechos) + ".")
+    if fallos:
+        partes.append("No pude: " + "; ".join(fallos) + ".")
+    return " ".join(partes)
+
+
+# ---- 4) borrar para siempre / vaciar
+def eliminar_definitivo(nombre: str = "", numeros=None, vaciar_todo=False, confirmado=False) -> str:
+    if not _pap.puede_listar():
+        return _pap.aviso_no_soportado("borrar definitivamente")
+    try:
+        if vaciar_todo:
+            entradas, error = _pap.listar(), None
+        else:
+            entradas, error = _elegir_entradas(nombre, numeros, un_solo_resultado=False)
+    except (PermissionError, NotImplementedError) as e:
+        return str(e)
+    if error:
+        return error
+    if not entradas:
+        return "La papelera ya está vacía."
+
+    accion = "vaciar" if vaciar_todo else "purgar"
+    ok, texto = _confirmacion(accion, [e.id for e in entradas], confirmado)
+    if ok:
+        hechos, fallos = [], []
+        for e in entradas:
+            try:
+                _pap.borrar_definitivo(e)
+                if os.path.lexists(e.id):
+                    raise OSError("sigue en la papelera")
+                hechos.append(e.nombre)
+            except Exception as ex:
+                fallos.append(f"{e.nombre}: {ex}")
+        _limpiar_pendiente()
+        _ultimo_listado.clear()
+        partes = []
+        if hechos:
+            resumen = ", ".join(hechos[:10]) + (f" y {len(hechos) - 10} más" if len(hechos) > 10 else "")
+            partes.append(f"Listo, eliminé para siempre ({len(hechos)}): {resumen}.")
+        if fallos:
+            partes.append("No pude: " + "; ".join(fallos) + ".")
+        return " ".join(partes)
+    if texto:
+        return texto
+    total = sum(e.tamano for e in entradas)
+    muestra = ", ".join(f"{e.nombre}{'/' if e.es_carpeta else ''} ({_tam(e.tamano)})" for e in entradas[:10])
+    if len(entradas) > 10:
+        muestra += f" y {len(entradas) - 10} más"
+    return (f"VISTA PREVIA: todavía NO se borró nada. Se ELIMINARÍAN PARA SIEMPRE {len(entradas)} elemento(s) "
+            f"({_tam(total)}): {muestra}. Esto es IRREVERSIBLE: no se podrán recuperar. Avísaselo al usuario, "
+            "pregúntale si confirma y ESPERA su respuesta; no vuelvas a llamar a esta herramienta hasta que conteste.")
 
 
 # --------------------------------------------------------------- archivos
@@ -995,6 +1335,13 @@ _EJECUTORES = {
     "ver_memoria": lambda a: ver_memoria(a.get("tipo", "")),
     "buscar_en_historial": lambda a: buscar_en_historial(a.get("consulta", ""), a.get("cantidad", 8)),
     "cambiar_nombre_asistente": lambda a: cambiar_nombre_asistente(a.get("nombre", "")),
+    "eliminar_archivo": lambda a: eliminar_archivo(a.get("rutas") or a.get("ruta") or "", bool(a.get("confirmado", False)),
+                                                   a.get("carpeta", "")),
+    "ver_papelera": lambda a: ver_papelera(a.get("buscar", "")),
+    "restaurar_archivo": lambda a: restaurar_archivo(a.get("nombre", ""), a.get("numeros")),
+    "eliminar_definitivo": lambda a: eliminar_definitivo(a.get("nombre", ""), a.get("numeros"),
+                                                         bool(a.get("vaciar_todo", False)), bool(a.get("confirmado", False))),
+    "vaciar_papelera": lambda a: eliminar_definitivo("", None, True, bool(a.get("confirmado", False))),
 }
 
 
@@ -1009,7 +1356,12 @@ _SINONIMOS = {"lista_archivos": "listar_archivos", "crear_archivo": "escribir_ar
               "memoria": "ver_memoria", "historial": "buscar_en_historial", "buscar_historial": "buscar_en_historial",
               "buscar_en_conversaciones": "buscar_en_historial", "mostrar_memoria": "ver_memoria", "info_video": "inspeccionar_video", "ver_arbol": "listar_arbol", "arbol": "listar_arbol",
               "listar_carpeta": "listar_arbol", "listar_directorio": "listar_arbol", "leer_zip_archivo": "leer_zip",
-              "buscar_archivos": "buscar_en_archivos", "grep": "buscar_en_archivos", "leer_web": "leer_pagina_web", "clima": "obtener_clima"}
+              "buscar_archivos": "buscar_en_archivos", "grep": "buscar_en_archivos", "leer_web": "leer_pagina_web", "clima": "obtener_clima",
+              "borrar_archivo": "eliminar_archivo", "borrar": "eliminar_archivo",
+              "eliminar": "eliminar_archivo", "recuperar_archivo": "restaurar_archivo",
+              "listar_papelera": "ver_papelera", "mostrar_papelera": "ver_papelera", "papelera": "ver_papelera",
+              "borrar_definitivamente": "eliminar_definitivo", "eliminar_permanentemente": "eliminar_definitivo",
+              "vaciar_basura": "vaciar_papelera"}
 
 
 # En la versión web/celular el servidor NO debe tocar sus propios archivos, pantalla ni ventanas.
@@ -1061,6 +1413,12 @@ _GRUPOS = [
 ]
 
 
+_PALABRAS_BORRAR = ("borra", "borrar", "borres", "elimina", "eliminar", "papelera", "restaura", "restaurar",
+                    "recupera", "recuperar", "deshaz", "deshacer", "inservible", "no sirven", "quita el archivo",
+                    "basura", "definitiv", "para siempre", "vaciar", "vacía", "vacia")
+
+
+
 def herramientas_para(texto: str) -> list:
     """Lista de TOOLS relevantes para este mensaje (siempre las básicas de archivos/memoria)."""
     t = (texto or "").lower()
@@ -1068,6 +1426,11 @@ def herramientas_para(texto: str) -> list:
     for palabras, grupo in _GRUPOS:
         if any(p in t for p in palabras):
             nombres |= grupo
+    if any(p in t for p in _PALABRAS_BORRAR):
+        _papelera_hasta["turno"] = _turno["n"] + _TURNOS_PAPELERA
+    # pendiente / seguimiento: el «sí» o el nombre del archivo que dice el usuario después NO traen palabras clave
+    if _borrado_pendiente() or _turno["n"] <= _papelera_hasta["turno"]:
+        nombres |= {"eliminar_archivo", "ver_papelera", "restaurar_archivo", "eliminar_definitivo"}
     if config.MODO_WEB:
         nombres &= _WEB_PERMITIDAS
     return [x for x in TOOLS if x["name"] in nombres]

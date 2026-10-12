@@ -295,6 +295,41 @@ def _preguntar_groq(historial, modelo, bitacora):
     return None
 
 
+def _preguntar_gemini(historial, modelo, bitacora):
+    """Gemini por su endpoint compatible con OpenAI: mismo formato de mensajes y herramientas que Groq."""
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        raise _SinCapacidad("falta GEMINI_API_KEY")
+    mensajes = list(historial)
+    herramientas = _tools_formato_openai(_tools_activas(historial))
+    for vuelta in range(config.MAX_TURNOS_TOOL + 1):
+        ultima = vuelta == config.MAX_TURNOS_TOOL
+        if ultima:
+            mensajes.append({"role": "user", "content": _NOTA_CIERRE})
+        cuerpo = {"model": modelo, "messages": _compactar(mensajes), "temperature": 0.3}
+        if not ultima:
+            cuerpo["tools"] = herramientas
+        resp = _post(config.GEMINI_URL, cuerpo,
+                     headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                     timeout=config.GEMINI_TIMEOUT)
+        msg = resp.json()["choices"][0]["message"]
+        tool_calls = msg.get("tool_calls")
+        if not tool_calls or ultima:
+            texto = (msg.get("content") or "").strip()
+            return re.sub(r"<thought>.*?</thought>", "", texto, flags=re.S).strip() or None
+        for i, tc in enumerate(tool_calls):          # Gemini a veces devuelve el id vacío
+            tc["id"] = tc.get("id") or f"call_{vuelta}_{i}"
+        mensajes.append({"role": "assistant", "content": msg.get("content") or "", "tool_calls": tool_calls})
+        for tc in tool_calls:
+            try:
+                args = json.loads(tc["function"].get("arguments") or "{}")
+            except json.JSONDecodeError:
+                args = {}
+            mensajes.append({"role": "tool", "tool_call_id": tc["id"], "name": tc["function"]["name"],
+                             "content": _ejecutar(tc["function"]["name"], args, bitacora)})
+    return None
+
+
 def _preguntar_anthropic(historial, modelo, bitacora):
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
@@ -375,12 +410,15 @@ def _cadena():
             cadena.append(("ollama", config.OLLAMA_MODEL))
         elif backend == "groq":
             cadena += [("groq", m) for m in _modelos_groq()]
+        elif backend == "gemini":
+            cadena += [("gemini", m) for m in config.GEMINI_MODELOS]
         elif backend == "anthropic":
             cadena.append(("anthropic", config.ANTHROPIC_MODEL))
     return cadena
 
 
-_FUNCIONES = {"ollama": _preguntar_ollama, "groq": _preguntar_groq, "anthropic": _preguntar_anthropic}
+_FUNCIONES = {"ollama": _preguntar_ollama, "groq": _preguntar_groq,
+              "gemini": _preguntar_gemini, "anthropic": _preguntar_anthropic}
 _MSG_TOPE = "Me enredé usando mis herramientas. ¿Puedes pedírmelo de otra forma?"
 
 
@@ -428,6 +466,7 @@ def preguntar(historial: list[dict]):
     """
     fallos, bitacora, descartados = [], [], set()
     pedido = _ultimo_mensaje_usuario(historial)
+    tools.nuevo_turno(pedido)
     saltado_por_lento = False
     for backend, modelo in _cadena():
         if backend in descartados:
@@ -500,6 +539,18 @@ def _vision(backend, datos: bytes, media_type: str, pregunta: str) -> str:
                            "content-type": "application/json"}, timeout=120)
         return "".join(b["text"] for b in r.json()["content"] if b["type"] == "text").strip()
 
+    if backend == "gemini":
+        api_key = os.environ.get("GEMINI_API_KEY")
+        if not api_key:
+            raise _SinCapacidad("falta GEMINI_API_KEY")
+        r = _post(config.GEMINI_URL,
+                  {"model": config.GEMINI_MODELOS[0], "messages": [{"role": "user", "content": [
+                      {"type": "text", "text": pregunta},
+                      {"type": "image_url", "image_url": {"url": f"data:{media_type};base64,{b64}"}}]}]},
+                  headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                  timeout=config.GEMINI_TIMEOUT)
+        return (r.json()["choices"][0]["message"].get("content") or "").strip()
+
     if backend == "groq":
         api_key = os.environ.get("GROQ_API_KEY")
         if not api_key:
@@ -539,11 +590,27 @@ def completar(sistema: str, usuario: str, max_tokens: int = 400):
     ningún cerebro pudo.
     """
     mensajes = [{"role": "system", "content": sistema}, {"role": "user", "content": usuario}]
-    for backend in ("groq", "anthropic", "ollama"):
+    for backend in ("gemini", "groq", "anthropic", "ollama"):
         if backend not in config.ORDEN_CEREBROS:
             continue
         try:
-            if backend == "groq":
+            if backend == "gemini":
+                api_key = os.environ.get("GEMINI_API_KEY")
+                if not api_key:
+                    continue
+                for modelo in list(reversed(config.GEMINI_MODELOS)):          # primero el más liviano
+                    try:
+                        r = _post(config.GEMINI_URL,
+                                  {"model": modelo, "messages": mensajes, "max_tokens": max_tokens + 600,
+                                   "temperature": 0.1},
+                                  headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                                  timeout=config.GEMINI_TIMEOUT)
+                    except _SinCapacidad:
+                        continue
+                    texto = (r.json()["choices"][0]["message"].get("content") or "").strip()
+                    if texto:
+                        return texto
+            elif backend == "groq":
                 api_key = os.environ.get("GROQ_API_KEY")
                 if not api_key:
                     continue

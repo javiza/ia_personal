@@ -55,6 +55,23 @@ Tú decides cómo darle las indicaciones: **🎙️ Voz activada** (te escucha c
 o clic derecho > *Voz activada*. Se recuerda al reiniciar (`ajustes.json`). Con la voz apagada, «Leer en voz alta las respuestas»
 sigue siendo opcional (también se recuerda).
 
+## Papelera del sistema
+
+Cuando le pides borrar algo, **va a la papelera real de tu computador** (la misma que ves en el explorador de archivos),
+no a una carpeta propia. Funciona con archivos y carpetas, y se puede hablar con ella de la papelera:
+
+| Dices | Qué hace |
+|---|---|
+| «borra la foto.png» / «elimina la carpeta viejos» | La manda a la papelera (te muestra qué y espera tu «sí») |
+| «muéstrame lo que hay en la papelera» | Lista con número, tamaño, fecha y de dónde venía cada cosa |
+| «restaura foto.png» / «restaura el 2» | La devuelve a su carpeta original (nunca pisa algo que ya exista) |
+| «borra foto.png para siempre» / «vacía la papelera» | Eliminación definitiva, **irreversible**; te lo avisa y pide confirmación |
+
+Borrar y eliminar para siempre siempre piden confirmación en tu **siguiente** mensaje. No toca `.env`, `memoria.sqlite3`,
+`ajustes.json`, `.git/`, el código del programa ni las carpetas base (Escritorio, Documentos...).
+Soporte: **Linux** completo · **macOS** enviar, ver y borrar definitivo (restaurar: desde el Finder) · **Windows** solo enviar.
+Restaurar solo devuelve a carpetas permitidas (`config.ALLOWED_DIRS`).
+
 ## Recuerda todos tus prompts
 
 Todo lo que pides (por voz o por escrito, incluso lo que falló por falta de internet) queda guardado en `memoria.sqlite3` (y en la nube si la configuraste).
@@ -140,3 +157,7 @@ aprendizaje automático): `["ollama"]`.
 - **Voz `403`**: `pip install --upgrade edge-tts` (necesita internet).
 - **«Nube sin conexión» en el log**: revisa que la URL sea la *External* (no la Internal), que el servicio esté activo y que no haya caducado (plan gratis).
 # ia_personal
+
+## Ventana de prompt retraída (versión de PC)
+Al iniciar, el chat queda retraído como un botón redondo 💬 que se arrastra por toda la pantalla (recuerda dónde lo dejas en `ajustes.json`).
+Clic en el botón = despliega el chat; «➖ Retraer» o la X del chat = vuelve a ser botón. Clic derecho en el botón: abrir chat / salir.
